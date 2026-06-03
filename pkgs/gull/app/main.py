@@ -68,6 +68,22 @@ _browser_ready: bool = False
 _browser_ready_lock: asyncio.Lock = asyncio.Lock()
 
 
+def _normalize_browser_command(cmd: str) -> str:
+    """Patch unsafe agent-browser defaults into shared workspace paths."""
+    try:
+        parts = shlex.split(cmd)
+    except ValueError:
+        return cmd
+
+    if parts == ["screenshot"]:
+        screenshot_path = (
+            f"{WORKSPACE_PATH.rstrip('/')}/screenshot-{int(time.time() * 1000)}.png"
+        )
+        return f"screenshot {shlex.quote(str(screenshot_path))}"
+
+    return cmd
+
+
 async def _ensure_browser_ready() -> None:
     """Ensure agent-browser is ready, while avoiding noisy daemon warnings.
 
@@ -221,6 +237,8 @@ async def _run_agent_browser(
     Returns:
         Tuple of (stdout, stderr, exit_code)
     """
+    cmd = _normalize_browser_command(cmd)
+
     # Build full command with session + profile injection
     parts = ["agent-browser"]
     if session:

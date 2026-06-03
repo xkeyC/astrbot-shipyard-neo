@@ -18,6 +18,22 @@ import pytest
 import app.main as gull_main
 
 
+def test_normalize_browser_command_defaults_screenshot_to_workspace(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(gull_main.time, "time", lambda: 1234.567)
+
+    cmd = gull_main._normalize_browser_command("screenshot")
+
+    assert cmd == "screenshot /workspace/screenshot-1234567.png"
+
+
+def test_normalize_browser_command_preserves_explicit_screenshot_path():
+    cmd = gull_main._normalize_browser_command("screenshot /workspace/page.png")
+
+    assert cmd == "screenshot /workspace/page.png"
+
+
 @dataclass
 class _FakeProcess:
     stdout_bytes: bytes
@@ -97,6 +113,32 @@ async def test_run_agent_browser_preserves_quoted_args(monkeypatch: pytest.Monke
     assert "fill" in captured_argv
     assert "@e1" in captured_argv
     assert "hello world" in captured_argv
+
+
+@pytest.mark.asyncio
+async def test_run_agent_browser_defaults_screenshot_to_workspace(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    captured_argv: list[str] = []
+
+    async def fake_create_subprocess_exec(*args, **kwargs):
+        nonlocal captured_argv
+        captured_argv = list(args)
+        return _FakeProcess(b"", b"", 0)
+
+    monkeypatch.setattr(gull_main.time, "time", lambda: 1234.567)
+    monkeypatch.setattr(
+        gull_main.asyncio, "create_subprocess_exec", fake_create_subprocess_exec
+    )
+
+    await gull_main._run_agent_browser(
+        "screenshot",
+        session="s",
+        profile="/p",
+        timeout=10,
+    )
+
+    assert captured_argv[-2:] == ["screenshot", "/workspace/screenshot-1234567.png"]
 
 
 @pytest.mark.asyncio
