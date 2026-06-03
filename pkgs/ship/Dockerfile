@@ -10,12 +10,14 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 WORKDIR /app
 
-# 安装运行时、构建依赖和常用命令行工具。
+# 使用国内 apt 镜像源，并保留到运行时供 agent 安装依赖。
 RUN sed -i \
     -e 's|http://archive.ubuntu.com/ubuntu|http://mirror.sjtu.edu.cn/ubuntu|g' \
     -e 's|http://security.ubuntu.com/ubuntu|http://mirror.sjtu.edu.cn/ubuntu|g' \
-    /etc/apt/sources.list.d/ubuntu.sources \
-    && apt-get update && apt-get install -y --no-install-recommends \
+    /etc/apt/sources.list.d/ubuntu.sources
+
+# 安装运行时、构建依赖和常用命令行工具。
+RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     bash \
     sudo \
@@ -54,8 +56,10 @@ RUN sed -i \
     less \
     procps \
     htop \
-    && rm -rf /var/lib/apt/lists/* \
-    && if ! getent group shipyard >/dev/null; then \
+    && rm -rf /var/lib/apt/lists/*
+
+# 创建运行用户和 workspace。
+RUN if ! getent group shipyard >/dev/null; then \
         if getent group 1000 >/dev/null; then groupadd shipyard; else groupadd -g 1000 shipyard; fi; \
     fi \
     && if ! id -u shipyard >/dev/null 2>&1; then \
@@ -66,8 +70,10 @@ RUN sed -i \
     && chmod 755 /workspace \
     && echo "root ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers \
     && echo "Defaults:root !requiretty" >> /etc/sudoers \
-    && echo "shipyard ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers \
-    && echo '# Basic shell configuration for shipyard user' > /workspace/.bashrc \
+    && echo "shipyard ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+
+# 配置默认 shell 环境。
+RUN echo '# Basic shell configuration for shipyard user' > /workspace/.bashrc \
     && echo "export PS1='\\u@shipyard:\\w\\$ '" >> /workspace/.bashrc \
     && echo 'export PATH=/opt/conda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' >> /workspace/.bashrc \
     && echo 'export PLAYWRIGHT_BROWSERS_PATH=/ms-playwright' >> /workspace/.bashrc \
@@ -78,7 +84,7 @@ RUN sed -i \
     && chown shipyard:shipyard /workspace/.bash_profile \
     && chmod 644 /workspace/.bashrc /workspace/.bash_profile
 
-# 安装 Miniforge/conda，并把 base 环境固定为 Python 3.13。
+# 下载并安装 Miniforge/conda。
 RUN arch="$(uname -m)" \
     && case "$arch" in \
         x86_64) miniforge_arch="x86_64" ;; \
@@ -87,8 +93,10 @@ RUN arch="$(uname -m)" \
     esac \
     && curl -fsSL "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-${miniforge_arch}.sh" -o /tmp/miniforge.sh \
     && bash /tmp/miniforge.sh -b -p "$CONDA_DIR" \
-    && rm /tmp/miniforge.sh \
-    && conda install -n base -y python=3.13 pip \
+    && rm /tmp/miniforge.sh
+
+# 把 conda base 环境固定为 Python 3.13。
+RUN conda install -n base -y python=3.13 pip \
     && conda clean -afy
 
 # 使用 uv 安装 Python 依赖到 conda base 环境。
@@ -100,17 +108,21 @@ RUN uv pip install --no-cache --python "$CONDA_DIR/bin/python" --system -r requi
     && { find "$CONDA_DIR" -name '*.pyo' -delete 2>/dev/null || true; }
 
 # 预装 Playwright 浏览器，供 Ship 内 Python 自动化脚本直接使用。
-RUN mkdir -p "$PLAYWRIGHT_BROWSERS_PATH" \
-    && python -m playwright install --with-deps chromium firefox webkit \
-    && chown -R shipyard:shipyard "$PLAYWRIGHT_BROWSERS_PATH" \
+RUN mkdir -p "$PLAYWRIGHT_BROWSERS_PATH"
+
+RUN python -m playwright install --with-deps chromium firefox webkit
+
+RUN chown -R shipyard:shipyard "$PLAYWRIGHT_BROWSERS_PATH" \
     && chmod -R 755 "$PLAYWRIGHT_BROWSERS_PATH" \
     && rm -rf /var/lib/apt/lists/*
 
-# 安装 Node.js (LTS) - 使用单个 RUN 层并清理缓存
-RUN curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
-    && rm -rf /var/lib/apt/lists/* \
-    && npm install -g pnpm vercel --no-audit --no-fund \
+# 安装 Node.js (LTS)。
+RUN curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
+
+RUN apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN npm install -g pnpm vercel --no-audit --no-fund \
     && npm cache clean --force \
     && rm -rf /root/.npm
 
