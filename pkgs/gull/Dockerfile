@@ -9,8 +9,8 @@ WORKDIR /app
 
 # --- System deps + Node.js ---
 RUN sed -i \
-    -e 's|http://deb.debian.org/debian|https://mirror.sjtu.edu.cn/debian|g' \
-    -e 's|http://deb.debian.org/debian-security|https://mirror.sjtu.edu.cn/debian-security|g' \
+    -e 's|http://deb.debian.org/debian|http://mirror.sjtu.edu.cn/debian|g' \
+    -e 's|http://deb.debian.org/debian-security|http://mirror.sjtu.edu.cn/debian-security|g' \
     /etc/apt/sources.list.d/debian.sources \
   && apt-get update \
   && apt-get install -y --no-install-recommends \
