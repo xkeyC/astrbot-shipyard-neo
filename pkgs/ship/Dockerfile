@@ -55,8 +55,12 @@ RUN sed -i \
     procps \
     htop \
     && rm -rf /var/lib/apt/lists/* \
-    && groupadd -g 1000 shipyard \
-    && useradd -u 1000 -g shipyard -d /workspace -s /bin/bash shipyard \
+    && if ! getent group shipyard >/dev/null; then \
+        if getent group 1000 >/dev/null; then groupadd shipyard; else groupadd -g 1000 shipyard; fi; \
+    fi \
+    && if ! id -u shipyard >/dev/null 2>&1; then \
+        if getent passwd 1000 >/dev/null; then useradd -g shipyard -d /workspace -s /bin/bash shipyard; else useradd -u 1000 -g shipyard -d /workspace -s /bin/bash shipyard; fi; \
+    fi \
     && mkdir -p /workspace \
     && chown shipyard:shipyard /workspace \
     && chmod 755 /workspace \
