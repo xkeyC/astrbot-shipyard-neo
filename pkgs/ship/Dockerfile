@@ -4,7 +4,7 @@ FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive \
     CONDA_DIR=/opt/conda \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
-    PATH=/opt/conda/bin:/usr/local/bin:/usr/bin:/bin \
+    PATH=/opt/conda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1
 
@@ -65,7 +65,7 @@ RUN sed -i \
     && echo "shipyard ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers \
     && echo '# Basic shell configuration for shipyard user' > /workspace/.bashrc \
     && echo "export PS1='\\u@shipyard:\\w\\$ '" >> /workspace/.bashrc \
-    && echo 'export PATH=/opt/conda/bin:/usr/local/bin:/usr/bin:/bin' >> /workspace/.bashrc \
+    && echo 'export PATH=/opt/conda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' >> /workspace/.bashrc \
     && echo 'export PLAYWRIGHT_BROWSERS_PATH=/ms-playwright' >> /workspace/.bashrc \
     && echo 'export HOME=/workspace' >> /workspace/.bashrc \
     && echo 'cd /workspace' >> /workspace/.bashrc \

@@ -20,7 +20,9 @@ logger = logging.getLogger(__name__)
 # 固定的执行用户和 workspace
 EXEC_USER = "shipyard"
 WORKSPACE_ROOT = Path("/workspace")
-SANDBOX_PATH = "/opt/conda/bin:/usr/local/bin:/usr/bin:/bin"
+SANDBOX_PATH = (
+    "/opt/conda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+)
 PLAYWRIGHT_BROWSERS_PATH = "/ms-playwright"
 
 # 后台进程注册表：process_id -> BackgroundProcessEntry
