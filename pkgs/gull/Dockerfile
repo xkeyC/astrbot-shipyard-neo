@@ -8,7 +8,11 @@ FROM ghcr.io/astral-sh/uv:0.5.30-python3.11-bookworm-slim
 WORKDIR /app
 
 # --- System deps + Node.js ---
-RUN apt-get update \
+RUN sed -i \
+    -e 's|http://deb.debian.org/debian|https://mirrors.tuna.tsinghua.edu.cn/debian|g' \
+    -e 's|http://deb.debian.org/debian-security|https://mirrors.tuna.tsinghua.edu.cn/debian-security|g' \
+    /etc/apt/sources.list.d/debian.sources \
+  && apt-get update \
   && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \

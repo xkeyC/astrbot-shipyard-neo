@@ -11,7 +11,11 @@ ENV DEBIAN_FRONTEND=noninteractive \
 WORKDIR /app
 
 # 安装运行时、构建依赖和常用命令行工具。
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN sed -i \
+    -e 's|http://archive.ubuntu.com/ubuntu|https://mirrors.tuna.tsinghua.edu.cn/ubuntu|g' \
+    -e 's|http://security.ubuntu.com/ubuntu|https://mirrors.tuna.tsinghua.edu.cn/ubuntu|g' \
+    /etc/apt/sources.list.d/ubuntu.sources \
+    && apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     bash \
     sudo \
