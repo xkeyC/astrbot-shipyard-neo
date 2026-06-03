@@ -64,13 +64,16 @@ execute_browser(cmd="open file:///workspace/report.html")
 
 ## Ship Container Pre-installed Environment
 
-Ship container is based on `python:3.13-slim-bookworm` with rich pre-installed tools. See [references/sandbox-environment.md](references/sandbox-environment.md) for details.
+Ship container is based on Ubuntu with a conda `base` environment and rich pre-installed tools. See [references/sandbox-environment.md](references/sandbox-environment.md) for details.
 
 ### Language Runtimes
 
 | Runtime | Details |
 |---------|---------|
-| **Python 3.13** | Executed via IPython kernel; variables persist across calls within same sandbox |
+| **Python 3.13** | Runs from conda `base`; executed via IPython kernel; variables persist across calls within same sandbox |
+| **Conda** | `conda` is available for installing runtime or system-backed Python dependencies when needed |
+| **uv** | Available for fast Python package installation inside the conda environment |
+| **Playwright** | Python Playwright plus Chromium, Firefox, and WebKit pre-installed under `/ms-playwright` |
 | **Node.js LTS** | Includes npm, pnpm, vercel |
 
 ### Pre-installed Python Libraries
@@ -81,11 +84,16 @@ Ship container is based on `python:3.13-slim-bookworm` with rich pre-installed t
 | Image Processing | Pillow, opencv-python-headless, imageio |
 | Document Processing | python-docx, python-pptx, openpyxl, xlrd, pypdf, pdfplumber, reportlab |
 | Web/XML | beautifulsoup4, lxml, jinja2, requests |
+| Browser Automation | playwright |
 | Utilities | tomli, pydantic, tenacity, cachetools, tqdm, orjson, python-slugify |
 
 ### System Tools
 
-`git`, `curl`, `vim-tiny`, `nano`, `less`, `htop`, `procps`, `sudo`
+`git`, `curl`, `wget`, `ffmpeg`, `imagemagick`, `poppler-utils`, `jq`, `rg`, `vim-tiny`, `nano`, `less`, `htop`, `procps`, `sudo`
+
+### Fonts
+
+Noto CJK, Noto CJK Extra, WenQuanYi Micro Hei, WenQuanYi Zen Hei, Noto Color Emoji, Symbola, and DejaVu Sans are available. Matplotlib is initialized with a CJK/emoji fallback chain.
 
 ### Environment Variables
 
@@ -121,13 +129,13 @@ echo $API_KEY
 ### 1. Sandbox Lifecycle
 
 ```
-list_profiles → create_sandbox → [operations] → delete_sandbox
+list_profiles → create_sandbox → [operations]
 ```
 
 1. Call `list_profiles` to discover available profiles (e.g., `python-default` for Ship only, `browser-python` for Ship + Gull)
 2. Call `create_sandbox` to create a sandbox and obtain `sandbox_id`
 3. Use `sandbox_id` for all subsequent operations
-4. Call `delete_sandbox` when finished to release resources
+4. Do not proactively call `delete_sandbox` just because a task is finished. Reuse the sandbox for follow-up work; Bay GC reclaims idle/expired sandboxes.
 
 ### 2. Code Execution
 
@@ -148,6 +156,34 @@ execute_shell(sandbox_id="xxx", command="ls -la", cwd="src")
 execute_shell(sandbox_id="xxx", command="npm install && npm run build")
 execute_shell(sandbox_id="xxx", command="git init && git add .")
 ```
+
+**Installing missing dependencies**:
+
+```python
+execute_shell(sandbox_id="xxx", command="conda install -y -c conda-forge package-name")
+execute_shell(sandbox_id="xxx", command="uv pip install --system package-name")
+```
+
+Prefer `conda install -c conda-forge` for packages that need native libraries or compiled dependencies. Use `uv pip install --system` for regular Python packages in the default conda environment.
+
+**Playwright automation inside Ship**:
+
+```python
+execute_python(
+    sandbox_id="xxx",
+    code="""
+from playwright.sync_api import sync_playwright
+with sync_playwright() as p:
+    browser = p.chromium.launch(headless=True)
+    page = browser.new_page(viewport={"width": 1280, "height": 720})
+    page.goto("https://example.com", wait_until="networkidle")
+    page.screenshot(path="/workspace/example.png", full_page=True)
+    browser.close()
+""",
+)
+```
+
+Save Playwright screenshots, downloads, traces, and generated files under `/workspace`. In `browser-python`, those files are shared with Gull through the same Cargo Volume.
 
 ### 3. File Operations
 

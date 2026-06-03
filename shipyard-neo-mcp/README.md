@@ -86,7 +86,7 @@ pip install -e .
 | `SHIPYARD_ENDPOINT_URL` | Bay API 地址 | ✅（或 `BAY_ENDPOINT`） |
 | `SHIPYARD_ACCESS_TOKEN` | 访问令牌 | ✅（或 `BAY_TOKEN`） |
 | `SHIPYARD_DEFAULT_PROFILE` | 默认 profile（默认 `python-default`） | ❌ |
-| `SHIPYARD_DEFAULT_TTL` | 默认 TTL 秒数（默认 `3600`） | ❌ |
+| `SHIPYARD_DEFAULT_TTL` | 默认 TTL 秒数（默认 `43200`，12 小时） | ❌ |
 | `SHIPYARD_MAX_TOOL_TEXT_CHARS` | 工具返回文本截断上限（默认 `12000`） | ❌ |
 | `SHIPYARD_SANDBOX_CACHE_SIZE` | sandbox 本地缓存上限（默认 `256`） | ❌ |
 | `SHIPYARD_MAX_WRITE_FILE_BYTES` | `write_file` 写入内容大小上限（默认 `5242880` = 5MB） | ❌ |

@@ -92,15 +92,24 @@ warnings.filterwarnings('ignore', category=UserWarning, module='matplotlib')
 # 使用构建时预热的字体缓存（不再清理和重建）
 # 如果缓存不存在，才会自动重建
 
-# 配置中文字体 + Symbola 作为 emoji fallback
-# Symbola 是矢量字体，支持任意缩放的 emoji 符号
-font_candidates = ['Noto Sans CJK SC', 'Noto Sans CJK JP', 'Noto Sans CJK TC']
+# 配置中文字体 + emoji fallback
+font_candidates = [
+    'Noto Sans CJK SC',
+    'Noto Sans CJK JP',
+    'Noto Sans CJK TC',
+    'WenQuanYi Zen Hei',
+    'WenQuanYi Micro Hei',
+]
 
 # 检查 Symbola 字体是否可用
 symbola_available = any('Symbola' in f.name for f in fm.fontManager.ttflist)
 if symbola_available:
     # 将 Symbola 加入 fallback 列表（用于 emoji）
     font_candidates.append('Symbola')
+
+noto_color_emoji_available = any('Noto Color Emoji' in f.name for f in fm.fontManager.ttflist)
+if noto_color_emoji_available:
+    font_candidates.append('Noto Color Emoji')
 
 font_candidates.append('DejaVu Sans')
 

@@ -20,6 +20,8 @@ logger = logging.getLogger(__name__)
 # 固定的执行用户和 workspace
 EXEC_USER = "shipyard"
 WORKSPACE_ROOT = Path("/workspace")
+SANDBOX_PATH = "/opt/conda/bin:/usr/local/bin:/usr/bin:/bin"
+PLAYWRIGHT_BROWSERS_PATH = "/ms-playwright"
 
 # 后台进程注册表：process_id -> BackgroundProcessEntry
 _background_processes: Dict[str, "BackgroundProcessEntry"] = {}
@@ -147,9 +149,13 @@ def get_background_process(process_id: str) -> Optional[Dict]:
 def _get_env_file_source() -> str:
     """获取环境文件 source 语句"""
     env_file = WORKSPACE_ROOT / ".bay_env.sh"
+    source_cmd = (
+        f"export PATH={shlex.quote(SANDBOX_PATH)} && "
+        f"export PLAYWRIGHT_BROWSERS_PATH={shlex.quote(PLAYWRIGHT_BROWSERS_PATH)} && "
+    )
     if env_file.exists():
-        return f"source {env_file} && "
-    return ""
+        source_cmd += f"source {env_file} && "
+    return source_cmd
 
 
 async def start_interactive_shell(
@@ -174,7 +180,8 @@ async def start_interactive_shell(
             "HOME": str(WORKSPACE_ROOT),
             "USER": EXEC_USER,
             "LOGNAME": EXEC_USER,
-            "PATH": "/usr/local/bin:/usr/bin:/bin",
+            "PATH": SANDBOX_PATH,
+            "PLAYWRIGHT_BROWSERS_PATH": PLAYWRIGHT_BROWSERS_PATH,
             "SHELL": "/bin/bash",
             "TERM": "xterm-256color",
             "LANG": "en_US.UTF-8",
@@ -239,7 +246,8 @@ async def run_command(
             "HOME": str(WORKSPACE_ROOT),
             "USER": EXEC_USER,
             "LOGNAME": EXEC_USER,
-            "PATH": "/usr/local/bin:/usr/bin:/bin",
+            "PATH": SANDBOX_PATH,
+            "PLAYWRIGHT_BROWSERS_PATH": PLAYWRIGHT_BROWSERS_PATH,
             "SHELL": "/bin/bash",
         }
         if env:
@@ -261,7 +269,10 @@ async def run_command(
                     detail=f"Access denied: path must be within workspace: {WORKSPACE_ROOT}",
                 )
 
-        env_args = []
+        env_args = [
+            f"PATH={SANDBOX_PATH}",
+            f"PLAYWRIGHT_BROWSERS_PATH={PLAYWRIGHT_BROWSERS_PATH}",
+        ]
         if env:
             for key, value in env.items():
                 env_args.append(f"{key}={value}")
@@ -276,8 +287,7 @@ async def run_command(
                 EXEC_USER,
                 "-H",
             ]
-            if env_args:
-                sudo_args.extend(["env", *env_args])
+            sudo_args.extend(["env", *env_args])
             sudo_args.extend(
                 [
                     "bash",
@@ -304,8 +314,7 @@ async def run_command(
                 EXEC_USER,
                 "-H",
             ]
-            if env_args:
-                sudo_args.extend(["env", *env_args])
+            sudo_args.extend(["env", *env_args])
             sudo_args.extend(args)
             logger.debug(
                 "Exec args: %s env_keys=%s",

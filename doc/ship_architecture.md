@@ -46,7 +46,7 @@
 ```
 pkgs/ship/
 ├── run.py                    # Uvicorn 启动入口
-├── Dockerfile                # 多阶段构建，基于 python:3.13-slim-bookworm
+├── Dockerfile                # 基于 Ubuntu + conda base 环境构建
 ├── entrypoint.sh             # 容器入口：修复 /workspace 权限后启动应用
 ├── Makefile                  # 构建/运行/测试快捷命令
 ├── pyproject.toml            # 项目元数据与依赖
@@ -104,7 +104,7 @@ pkgs/ship/
 
 - **单例内核模式**：每个 Ship 容器维护一个 `AsyncKernelManager` 实例
 - 启动时通过 `start_kernel(cwd="/workspace")` 将内核工作目录设为沙箱根
-- 内核初始化包括 **matplotlib 中文字体配置**（Noto CJK + Symbola fallback）
+- 内核初始化包括 **matplotlib 中文/emoji 字体配置**（Noto CJK + WenQuanYi + Noto Color Emoji + Symbola fallback）
 - 支持文本输出和 Base64 PNG 图像输出
 - 提供内核重启和关闭接口
 
@@ -188,29 +188,32 @@ Shell 命令执行也有独立的路径校验逻辑（`cwd` 参数必须在 `/wo
 
 ## 5. 容器构建
 
-Ship 使用 **多阶段 Docker 构建**（见 [`Dockerfile`](../pkgs/ship/Dockerfile)），优化镜像体积和构建缓存。
+Ship 使用 Ubuntu 基础镜像构建（见 [`Dockerfile`](../pkgs/ship/Dockerfile)），默认 Python 环境为 conda `base`。
 
-### 5.1 构建阶段 (builder)
+### 5.1 Python 环境
 
 ```
-python:3.13-slim-bookworm (builder)
-  ├─ 安装编译工具: gcc, g++, python3-dev, libffi-dev, libpng-dev ...
-  ├─ 使用 uv pip install --prefix=/install 安装依赖到独立目录
+ubuntu:24.04
+  ├─ 安装 Miniforge 到 /opt/conda
+  ├─ conda base 固定为 Python 3.13
+  ├─ 使用 uv pip install --system 安装依赖到 conda base
   └─ 清理 __pycache__、.pyc、.pyo 减小体积
 ```
 
 ### 5.2 最终镜像
 
 ```
-python:3.13-slim-bookworm
+ubuntu:24.04
   ├─ 运行时依赖:
   │   ├─ 图像处理: libpng16-16, libjpeg62-turbo, libglib2.0-0
   │   ├─ XML: libxml2, libxslt1.1
-  │   ├─ 字体: fontconfig, fonts-noto-cjk, fonts-symbola
-  │   ├─ 系统: sudo, curl, gnupg, git
-  │   └─ 调试: vim-tiny, nano, less, procps, htop
+  │   ├─ 字体: fontconfig, fonts-noto-cjk, fonts-noto-cjk-extra, fonts-noto-color-emoji, fonts-symbola, fonts-wqy-*
+  │   ├─ 系统: sudo, curl, wget, gnupg, git, nodejs, npm
+  │   ├─ 媒体/文档: ffmpeg, imagemagick, poppler-utils
+  │   └─ 调试: jq, ripgrep, vim-tiny, nano, less, procps, htop
   │
-  ├─ COPY --from=builder /install → /usr/local  (Python 包)
+  ├─ Miniforge /opt/conda + Python 3.13 + uv-installed Python packages
+  ├─ Playwright Chromium / Firefox / WebKit browsers under /ms-playwright
   │
   ├─ Node.js LTS + pnpm + vercel (全局安装)
   │
@@ -436,11 +439,11 @@ Ship 的 IPython 内核支持多种输出格式，通过 Jupyter 消息协议采
 内核初始化时配置了字体 fallback 链（见 [`ipython.py`](../pkgs/ship/app/components/ipython.py:62-85)）：
 
 ```
-Noto Sans CJK SC → Noto Sans CJK JP → Noto Sans CJK TC → Symbola → DejaVu Sans
+Noto Sans CJK SC → Noto Sans CJK JP → Noto Sans CJK TC → WenQuanYi Zen Hei → WenQuanYi Micro Hei → Symbola → Noto Color Emoji → DejaVu Sans
 ```
 
-- **CJK 字体**: 支持中日韩文字的图表标题和标签
-- **Symbola**: 矢量 emoji 字体（如果可用）
+- **CJK 字体**: 支持中日韩文字的图表标题和标签，包括 Noto CJK 和 WenQuanYi
+- **Emoji 字体**: Noto Color Emoji + Symbola fallback
 - **DejaVu Sans**: 最终 fallback
 
 ---

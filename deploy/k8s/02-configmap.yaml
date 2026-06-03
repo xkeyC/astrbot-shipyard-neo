@@ -60,7 +60,7 @@ data:
           - filesystem
           - shell
           - python
-        idle_timeout: 1800
+        idle_timeout: 43200
         env: {}
 
       # ── Data Science sandbox (more resources) ──────────
@@ -76,7 +76,7 @@ data:
           - filesystem
           - shell
           - python
-        idle_timeout: 1800
+        idle_timeout: 43200
         env: {}
 
       # ── Browser + Python multi-container sandbox ───────
@@ -109,7 +109,7 @@ data:
             capabilities:
               - browser
             env: {}
-        idle_timeout: 1800
+        idle_timeout: 43200
 
     gc:
       enabled: true

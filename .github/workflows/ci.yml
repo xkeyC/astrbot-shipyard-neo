@@ -182,7 +182,7 @@ jobs:
               runtime_type: ship
               runtime_port: 8123
               capabilities: [filesystem, shell, python]
-              idle_timeout: 1800
+              idle_timeout: 43200
 
             - id: browser-python
               containers:
@@ -198,7 +198,7 @@ jobs:
                   runtime_port: 8115
                   capabilities: [browser]
                   primary_for: [browser]
-              idle_timeout: 1800
+              idle_timeout: 43200
           YAML
 
       - name: Start Bay API for e2e

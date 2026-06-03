@@ -248,7 +248,7 @@ class ProfileConfig(BaseModel):
     startup: StartupConfig = Field(default_factory=StartupConfig)
 
     # ========== Shared configuration ==========
-    idle_timeout: int = 1800  # 30 minutes
+    idle_timeout: int = 43200  # 12 hours
 
     # ========== Warm pool configuration ==========
     warm_pool_size: int = 0  # Number of pre-warmed sandbox instances (0 = disabled)
@@ -495,14 +495,14 @@ class Settings(BaseSettings):
                 image="ship:latest",
                 resources=ResourceSpec(cpus=1.0, memory="1g"),
                 capabilities=["filesystem", "shell", "python"],
-                idle_timeout=1800,
+                idle_timeout=43200,
             ),
             ProfileConfig(
                 id="python-data",
                 image="ship:data",
                 resources=ResourceSpec(cpus=2.0, memory="4g"),
                 capabilities=["filesystem", "shell", "python"],
-                idle_timeout=1800,
+                idle_timeout=43200,
             ),
         ]
     )

@@ -1,86 +1,102 @@
-# ===== 构建阶段 =====
-FROM python:3.13-slim-bookworm AS builder
-
-WORKDIR /build
-
-# 安装构建依赖（临时）
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    g++ \
-    python3-dev \
-    libffi-dev \
-    libpng-dev \
-    libjpeg-dev \
-    libxml2-dev \
-    libxslt1-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-# 使用 uv 安装 Python 依赖到指定目录
-COPY --from=ghcr.io/astral-sh/uv:0.5 /uv /usr/local/bin/uv
-COPY requirements.txt .
-
-# 安装依赖，禁用缓存
-RUN uv pip install --no-cache --prefix=/install -r requirements.txt \
-    # 删除不需要的文件以减小体积
-    && find /install -type d -name '__pycache__' -exec rm -rf {} + 2>/dev/null || true \
-    && find /install -name '*.pyc' -delete 2>/dev/null || true \
-    && find /install -name '*.pyo' -delete 2>/dev/null || true
-
 # ===== 最终镜像 =====
-FROM python:3.13-slim-bookworm
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    CONDA_DIR=/opt/conda \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+    PATH=/opt/conda/bin:/usr/local/bin:/usr/bin:/bin \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1
 
 WORKDIR /app
 
-# 单个 RUN 命令安装所有运行时依赖和配置用户，减少镜像层数
+# 安装运行时、构建依赖和常用命令行工具。
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    # 图像处理运行时库（Pillow / OpenCV headless）
+    ca-certificates \
+    bash \
+    sudo \
+    curl \
+    wget \
+    gnupg \
+    git \
+    build-essential \
+    pkg-config \
     libpng16-16 \
     libjpeg62-turbo \
     libglib2.0-0 \
-    # lxml 运行时库
+    libgl1 \
     libxml2 \
     libxslt1.1 \
-    # 字体显示
     fontconfig \
     fonts-noto-cjk \
+    fonts-noto-cjk-extra \
+    fonts-noto-color-emoji \
     fonts-symbola \
-    # 用户管理工具
-    sudo \
-    # Node.js 安装需要的工具
-    curl \
-    gnupg \
-    git \
-    # 压缩/解压工具
+    fonts-wqy-microhei \
+    fonts-wqy-zenhei \
     zip \
     unzip \
-    # 调试工具（可选，生产环境可移除）
+    tar \
+    gzip \
+    bzip2 \
+    xz-utils \
+    ffmpeg \
+    imagemagick \
+    poppler-utils \
+    jq \
+    ripgrep \
     vim-tiny \
     nano \
     less \
     procps \
     htop \
     && rm -rf /var/lib/apt/lists/* \
-    # 创建用户和目录
     && groupadd -g 1000 shipyard \
     && useradd -u 1000 -g shipyard -d /workspace -s /bin/bash shipyard \
     && mkdir -p /workspace \
     && chown shipyard:shipyard /workspace \
     && chmod 755 /workspace \
-    # 配置 sudo
     && echo "root ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers \
     && echo "Defaults:root !requiretty" >> /etc/sudoers \
     && echo "shipyard ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers \
-    # 创建 .bashrc
     && echo '# Basic shell configuration for shipyard user' > /workspace/.bashrc \
     && echo "export PS1='\\u@shipyard:\\w\\$ '" >> /workspace/.bashrc \
-    && echo 'export PATH=/usr/local/bin:/usr/bin:/bin' >> /workspace/.bashrc \
+    && echo 'export PATH=/opt/conda/bin:/usr/local/bin:/usr/bin:/bin' >> /workspace/.bashrc \
+    && echo 'export PLAYWRIGHT_BROWSERS_PATH=/ms-playwright' >> /workspace/.bashrc \
     && echo 'export HOME=/workspace' >> /workspace/.bashrc \
     && echo 'cd /workspace' >> /workspace/.bashrc \
+    && cp /workspace/.bashrc /workspace/.bash_profile \
     && chown shipyard:shipyard /workspace/.bashrc \
-    && chmod 644 /workspace/.bashrc
+    && chown shipyard:shipyard /workspace/.bash_profile \
+    && chmod 644 /workspace/.bashrc /workspace/.bash_profile
 
-# 从 builder 阶段复制 Python 包
-COPY --from=builder /install /usr/local
+# 安装 Miniforge/conda，并把 base 环境固定为 Python 3.13。
+RUN arch="$(uname -m)" \
+    && case "$arch" in \
+        x86_64) miniforge_arch="x86_64" ;; \
+        aarch64) miniforge_arch="aarch64" ;; \
+        *) echo "Unsupported architecture: $arch" >&2; exit 1 ;; \
+    esac \
+    && curl -fsSL "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-${miniforge_arch}.sh" -o /tmp/miniforge.sh \
+    && bash /tmp/miniforge.sh -b -p "$CONDA_DIR" \
+    && rm /tmp/miniforge.sh \
+    && conda install -n base -y python=3.13 pip \
+    && conda clean -afy
+
+# 使用 uv 安装 Python 依赖到 conda base 环境。
+COPY --from=ghcr.io/astral-sh/uv:0.5 /uv /usr/local/bin/uv
+COPY requirements.txt .
+RUN uv pip install --no-cache --python "$CONDA_DIR/bin/python" --system -r requirements.txt \
+    && { find "$CONDA_DIR" -type d -name '__pycache__' -exec rm -rf {} + 2>/dev/null || true; } \
+    && { find "$CONDA_DIR" -name '*.pyc' -delete 2>/dev/null || true; } \
+    && { find "$CONDA_DIR" -name '*.pyo' -delete 2>/dev/null || true; }
+
+# 预装 Playwright 浏览器，供 Ship 内 Python 自动化脚本直接使用。
+RUN mkdir -p "$PLAYWRIGHT_BROWSERS_PATH" \
+    && python -m playwright install --with-deps chromium firefox webkit \
+    && chown -R shipyard:shipyard "$PLAYWRIGHT_BROWSERS_PATH" \
+    && chmod -R 755 "$PLAYWRIGHT_BROWSERS_PATH" \
+    && rm -rf /var/lib/apt/lists/*
 
 # 安装 Node.js (LTS) - 使用单个 RUN 层并清理缓存
 RUN curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - \
@@ -106,12 +122,22 @@ import matplotlib.font_manager as fm
 fm._load_fontmanager(try_read_cache=False)
 
 # 配置中文字体
-font_candidates = ['Noto Sans CJK SC', 'Noto Sans CJK JP', 'Noto Sans CJK TC']
+font_candidates = [
+    'Noto Sans CJK SC',
+    'Noto Sans CJK JP',
+    'Noto Sans CJK TC',
+    'WenQuanYi Zen Hei',
+    'WenQuanYi Micro Hei',
+]
 
 # 检查 Symbola 字体是否可用
 symbola_available = any('Symbola' in f.name for f in fm.fontManager.ttflist)
 if symbola_available:
     font_candidates.append('Symbola')
+
+noto_color_emoji_available = any('Noto Color Emoji' in f.name for f in fm.fontManager.ttflist)
+if noto_color_emoji_available:
+    font_candidates.append('Noto Color Emoji')
 
 font_candidates.append('DejaVu Sans')
 

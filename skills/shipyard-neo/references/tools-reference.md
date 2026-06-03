@@ -11,7 +11,7 @@ Create a new sandbox environment. Returns `sandbox_id` for subsequent operations
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `profile` | string | No | `python-default` | Runtime profile (e.g., `python-default`, `browser-python`). Use `list_profiles` to discover available options. |
-| `ttl` | integer | No | 3600 | Time-to-live in seconds. Use `0` for no expiration. |
+| `ttl` | integer | No | 43200 | Time-to-live in seconds. Use `0` for no expiration. |
 
 **Returns**: Sandbox ID, profile, status, capabilities list, TTL. When the sandbox has an active session, also returns `containers` list with each container's name, runtime_type, version, status, capabilities, and health.
 

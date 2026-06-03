@@ -9,7 +9,7 @@ Ship is a containerized execution environment providing three core capabilities:
 
 ## Container Base Image
 
-- **Base**: `python:3.13-slim-bookworm` (Debian Bookworm minimal)
+- **Base**: Ubuntu with conda `base` as the default Python environment
 - **Runtime user**: `shipyard` (uid 1000, passwordless sudo)
 - **Workspace**: `/workspace` (mounted as shared Cargo Volume)
 
@@ -77,7 +77,7 @@ print("Chart saved to chart.png")
 
 ```python
 import subprocess
-subprocess.run(["pip", "install", "package-name"], check=True)
+subprocess.run(["uv", "pip", "install", "--system", "package-name"], check=True)
 ```
 
 ### Pre-installed Python Libraries
@@ -88,17 +88,21 @@ subprocess.run(["pip", "install", "package-name"], check=True)
 | Image Processing | Pillow, opencv-python-headless, imageio |
 | Document Processing | python-docx, python-pptx, openpyxl, xlrd, xlsxwriter, pypdf, pdfplumber, reportlab |
 | Web/HTTP | beautifulsoup4, lxml, jinja2, httpx, requests |
+| Browser Automation | playwright with Chromium, Firefox, and WebKit browsers pre-installed |
 | Utilities | pydantic, tomli, aiofiles, tenacity, cachetools, tqdm, orjson, python-slugify |
 | IPython/Jupyter | ipython, ipykernel, jupyter-client |
 | Monitoring | sentry-sdk |
 
-> **Tip**: Additional packages can be installed at runtime via `pip install`. Installed packages do not persist across container restarts (unless you save a requirements.txt to `/workspace` and re-install).
+> **Tip**: Additional packages can be installed at runtime with `conda install -y -c conda-forge ...` or `uv pip install --system ...`. Prefer conda for packages that need native libraries or compiled dependencies. Installed packages do not persist across container restarts unless you save an environment file or requirements file to `/workspace` and re-install.
 
 ### Language Runtimes
 
 | Runtime | Version | Details |
 |---------|---------|---------|
 | Python | 3.13 | IPython kernel; variables persist across calls |
+| Conda | latest | Default `base` environment under `/opt/conda` |
+| uv | latest image copy | Fast Python package installation into conda `base` |
+| Playwright | 1.x | Python package plus pre-installed Chromium, Firefox, and WebKit under `/ms-playwright` |
 | Node.js | LTS | npm, pnpm, vercel globally installed |
 
 ### System-level Packages
@@ -106,24 +110,43 @@ subprocess.run(["pip", "install", "package-name"], check=True)
 | Category | Packages |
 |----------|----------|
 | Version Control | git |
-| HTTP/Network | curl |
+| HTTP/Network | curl, wget |
 | Text Editors | vim-tiny, nano, less |
 | Process Management | procps, htop |
+| Media/Documents | ffmpeg, imagemagick, poppler-utils |
+| Data/Diagnostics | jq, ripgrep (`rg`) |
 | Permissions | sudo (passwordless for shipyard user) |
 | Image/Font Libs | libpng16-16, libjpeg62-turbo, fontconfig |
-| CJK Fonts | fonts-noto-cjk |
-| Emoji/Symbol | fonts-symbola |
+| CJK Fonts | fonts-noto-cjk, fonts-noto-cjk-extra, WenQuanYi Micro Hei, WenQuanYi Zen Hei |
+| Emoji/Symbol | fonts-noto-color-emoji, fonts-symbola |
 | XML Libs | libxml2, libxslt1.1 |
 
 ### CJK Font Support
 
-Noto Sans CJK and Symbola fonts are pre-installed. Matplotlib font cache is pre-warmed. For CJK text in plots:
+Noto Sans CJK, WenQuanYi, Noto Color Emoji, and Symbola fonts are pre-installed. Matplotlib font cache is pre-warmed. For CJK text in plots:
 
 ```python
 import matplotlib.pyplot as plt
-plt.rcParams["font.sans-serif"] = ["Noto Sans CJK SC", "DejaVu Sans"]
+plt.rcParams["font.sans-serif"] = ["Noto Sans CJK SC", "WenQuanYi Micro Hei", "DejaVu Sans"]
 plt.rcParams["axes.unicode_minus"] = False
 ```
+
+### Playwright Browser Automation
+
+Playwright is pre-installed in the Python environment, and Chromium, Firefox, and WebKit are downloaded into `/ms-playwright` during image build. You do not need to run `playwright install` at task time.
+
+```python
+from playwright.sync_api import sync_playwright
+
+with sync_playwright() as p:
+    browser = p.chromium.launch(headless=True)
+    page = browser.new_page(viewport={"width": 1280, "height": 720})
+    page.goto("https://example.com", wait_until="networkidle")
+    page.screenshot(path="/workspace/example.png", full_page=True)
+    browser.close()
+```
+
+Save screenshots, downloads, traces, and generated HTML under `/workspace`. In a `browser-python` multi-container sandbox, files written by Playwright in Ship are visible to Gull and vice versa because both containers share the Cargo Volume.
 
 ## Capability 2: Shell Execution
 
@@ -177,7 +200,7 @@ echo $!  # Print PID for later management
 
 ### System Tools Available
 
-`git`, `curl`, `vim-tiny`, `nano`, `less`, `htop`, `procps`, `sudo`
+`git`, `curl`, `wget`, `ffmpeg`, `imagemagick`, `poppler-utils`, `jq`, `rg`, `vim-tiny`, `nano`, `less`, `htop`, `procps`, `sudo`, `conda`, `uv`
 
 ## Capability 3: Filesystem Operations
 
@@ -294,6 +317,8 @@ print(os.environ.get("API_KEY"))
 | Write file limit | 5MB (UTF-8 encoded) |
 | Upload/download limit | 50MB per file |
 | Python runtime | 3.13 (IPython kernel, variables persist) |
+| Python environment | Conda `base` under `/opt/conda`; `conda` and `uv` available |
+| Playwright browsers | Pre-installed under `/ms-playwright`; write artifacts to `/workspace` |
 | Node.js runtime | LTS (npm, pnpm, vercel) |
 | Shell user | `shipyard` with passwordless sudo |
 | Profile env vars | Automatically injected via `/workspace/.bay_env.sh` |

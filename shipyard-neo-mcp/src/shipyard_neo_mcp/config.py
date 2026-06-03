@@ -49,13 +49,13 @@ def get_config() -> dict[str, Any]:
     default_profile = os.environ.get("SHIPYARD_DEFAULT_PROFILE", "python-default")
 
     # Allow ttl=0 for infinite TTL.
-    default_ttl_raw = os.environ.get("SHIPYARD_DEFAULT_TTL", "3600")
+    default_ttl_raw = os.environ.get("SHIPYARD_DEFAULT_TTL", "43200")
     try:
         default_ttl = int(default_ttl_raw)
     except ValueError:
-        default_ttl = 3600
+        default_ttl = 43200
     if default_ttl < 0:
-        default_ttl = 3600
+        default_ttl = 43200
 
     return {
         "endpoint_url": endpoint,

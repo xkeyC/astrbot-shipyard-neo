@@ -20,7 +20,7 @@ def get_tool_definitions() -> list[Tool]:
                     },
                     "ttl": {
                         "type": "integer",
-                        "description": "Time-to-live in seconds. Defaults to 3600 (1 hour). Use 0 for no expiration.",
+                        "description": "Time-to-live in seconds. Defaults to 43200 (12 hours). Use 0 for no expiration.",
                     },
                 },
                 "required": [],

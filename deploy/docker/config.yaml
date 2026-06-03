@@ -85,7 +85,7 @@ profiles:
       - filesystem  # includes upload/download
       - shell
       - python
-    idle_timeout: 1800  # 30 minutes
+    idle_timeout: 43200  # 12 hours
     warm_pool_size: 1   # Keep 1 pre-warmed instance ready
     # Environment variables injected into the runtime container (available in Python and Shell)
     # Example: env: { TZ: "Asia/Shanghai", LANG: "en_US.UTF-8", CUSTOM_VAR: "value" }
@@ -107,7 +107,7 @@ profiles:
       - filesystem  # includes upload/download
       - shell
       - python
-    idle_timeout: 1800
+    idle_timeout: 43200
     warm_pool_size: 1
     env: {}
 
@@ -141,7 +141,7 @@ profiles:
         capabilities:
           - browser
         env: {}
-    idle_timeout: 1800
+    idle_timeout: 43200
     warm_pool_size: 1
 
 gc:

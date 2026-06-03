@@ -62,14 +62,14 @@ jobs:
               runtime_type: ship
               runtime_port: 8123
               capabilities: [filesystem, shell, python]
-              idle_timeout: 1800
+              idle_timeout: 43200
 
             - id: python-data
               image: ship:latest
               runtime_type: ship
               runtime_port: 8123
               capabilities: [filesystem, shell, python]
-              idle_timeout: 1800
+              idle_timeout: 43200
 
             - id: browser-python
               containers:
@@ -85,7 +85,7 @@ jobs:
                   runtime_port: 8115
                   capabilities: [browser]
                   primary_for: [browser]
-              idle_timeout: 1800
+              idle_timeout: 43200
           CFG
 
       - name: Start Bay API for nightly e2e

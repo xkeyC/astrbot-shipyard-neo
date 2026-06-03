@@ -15,9 +15,9 @@ list_profiles()
 ```
 Available Profiles (5)
 
-- python-default: capabilities=[filesystem, shell, python], idle_timeout=3600s
+- python-default: capabilities=[filesystem, shell, python], idle_timeout=43200s
     └ primary (ship): [filesystem, python, shell]
-- browser-python — Browser automation with Python backend: capabilities=[browser, filesystem, python, shell], idle_timeout=3600s
+- browser-python — Browser automation with Python backend: capabilities=[browser, filesystem, python, shell], idle_timeout=43200s
     └ ship (ship): [filesystem, python, shell]
     └ browser (gull): [browser]
 ```
@@ -34,9 +34,9 @@ Key observations:
 │           Sandbox                    │
 │  ┌────────────────────────────────┐  │
 │  │       Ship Container           │  │
-│  │  Python 3.13 + IPython         │  │
-│  │  Node.js LTS + pnpm            │  │
-│  │  git, curl, vim, sudo, etc.    │  │
+│  │  Ubuntu + conda Python 3.13    │  │
+│  │  uv + Node.js LTS + pnpm       │  │
+│  │  ffmpeg, git, curl, sudo, etc. │  │
 │  │  Data science + doc libraries  │  │
 │  └──────────┬─────────────────────┘  │
 │             │                        │
@@ -82,13 +82,16 @@ Key observations:
 
 ## Ship Container Environment
 
-Ship containers are based on `python:3.13-slim-bookworm`.
+Ship containers are based on Ubuntu and default to the conda `base` environment under `/opt/conda`.
 
 ### Language Runtimes
 
 | Runtime | Details |
 |---------|---------|
-| **Python 3.13** | IPython kernel; variables persist across `execute_python` calls |
+| **Python 3.13** | Conda `base` environment; IPython kernel; variables persist across `execute_python` calls |
+| **Conda** | Available as `conda`; use `conda install -y -c conda-forge ...` when dependencies need native libraries |
+| **uv** | Available as `uv`; use `uv pip install --system ...` for fast Python package installs in conda `base` |
+| **Playwright** | Python Playwright with Chromium, Firefox, and WebKit pre-installed under `/ms-playwright` |
 | **Node.js LTS** | npm, pnpm, vercel globally installed |
 
 ### Pre-installed Python Libraries
@@ -99,15 +102,20 @@ Ship containers are based on `python:3.13-slim-bookworm`.
 | Image Processing | Pillow, opencv-python-headless, imageio |
 | Document Processing | python-docx, python-pptx, openpyxl, xlrd, pypdf, pdfplumber, reportlab |
 | Web/XML | beautifulsoup4, lxml, jinja2 |
+| Browser Automation | playwright |
 | Utilities | pydantic, tomli, aiofiles |
 
 ### System Tools
 
-`git`, `curl`, `vim-tiny`, `nano`, `less`, `htop`, `procps`, `sudo` (passwordless)
+`git`, `curl`, `wget`, `ffmpeg`, `imagemagick`, `poppler-utils`, `jq`, `rg`, `vim-tiny`, `nano`, `less`, `htop`, `procps`, `sudo` (passwordless)
 
 ### Fonts
 
-CJK fonts (Noto Sans CJK) and Symbola pre-installed. Matplotlib font cache pre-warmed.
+CJK fonts (Noto Sans CJK, Noto CJK Extra, WenQuanYi), emoji fonts (Noto Color Emoji, Symbola), and DejaVu Sans are pre-installed. Matplotlib font cache is pre-warmed.
+
+### Playwright Artifacts
+
+Playwright runs in the Ship container. Save screenshots, downloads, traces, and generated files under `/workspace` so they are available to file tools and, in multi-container profiles, to Gull.
 
 ## Gull Container Environment
 

@@ -37,6 +37,7 @@ dependencies = [
     "tomli>=2.0.0",
     "uvicorn>=0.37.0",
     "xlrd>=2.0.2",
+    "playwright>=1.56.0",
 ]
 
 [project.optional-dependencies]
