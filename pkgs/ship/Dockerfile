@@ -26,7 +26,7 @@ RUN sed -i \
     build-essential \
     pkg-config \
     libpng16-16 \
-    libjpeg62-turbo \
+    libjpeg-turbo8 \
     libglib2.0-0 \
     libgl1 \
     libxml2 \
