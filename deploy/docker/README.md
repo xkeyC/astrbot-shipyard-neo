@@ -97,6 +97,22 @@ docker compose -f docker-compose.yaml -f docker-compose.with-astrbot.yaml logs -
   - `python-data` — 数据科学沙箱 (2 CPU / 4GB)
   - `browser-python` — 浏览器自动化 + Python 多容器沙箱
 
+### 代理配置
+
+如果需要让 sandbox 内的 Python / Shell 使用代理，不要只写 Docker `build.args`；`build.args` 只在构建镜像时生效，不会传给 Bay 运行时，也不会传给 Bay 动态创建的 Ship/Gull 容器。
+
+推荐在 `docker-compose.yaml` 的 `bay.environment` 中启用 Bay 代理注入：
+
+```yaml
+environment:
+  - BAY_PROXY__ENABLED=true
+  - BAY_PROXY__HTTP_PROXY=http://host.docker.internal:7890
+  - BAY_PROXY__HTTPS_PROXY=http://host.docker.internal:7890
+  - BAY_PROXY__NO_PROXY=127.0.0.1,localhost,bay,bay-network
+```
+
+也可以在 `config.yaml` 的 `proxy:` 段配置同样的值。配置后需要重建 Bay 容器，并新建 sandbox；已存在的 sandbox 不会自动更新环境变量。
+
 ### Profile API
 
 通过 `GET /v1/profiles` 查看可用 profile：

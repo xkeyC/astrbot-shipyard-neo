@@ -8,6 +8,7 @@ with background process management and interactive shell support.
 import asyncio
 import logging
 import os
+import re
 import shlex
 import uuid
 from dataclasses import dataclass
@@ -24,6 +25,17 @@ SANDBOX_PATH = (
     "/opt/conda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 )
 PLAYWRIGHT_BROWSERS_PATH = "/ms-playwright"
+PROXY_ENV_KEYS = (
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "NO_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+    "no_proxy",
+)
+SHELL_ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 # 后台进程注册表：process_id -> BackgroundProcessEntry
 _background_processes: Dict[str, "BackgroundProcessEntry"] = {}
@@ -160,6 +172,50 @@ def _get_env_file_source() -> str:
     return source_cmd
 
 
+def _get_runtime_env_overrides() -> Dict[str, str]:
+    """Collect container-level env vars that must reach user code."""
+    return {key: value for key in PROXY_ENV_KEYS if (value := os.environ.get(key))}
+
+
+def _get_base_process_env(env: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+    process_env = {
+        "HOME": str(WORKSPACE_ROOT),
+        "USER": EXEC_USER,
+        "LOGNAME": EXEC_USER,
+        "PATH": SANDBOX_PATH,
+        "PLAYWRIGHT_BROWSERS_PATH": PLAYWRIGHT_BROWSERS_PATH,
+        "SHELL": "/bin/bash",
+    }
+    process_env.update(_get_runtime_env_overrides())
+    if env:
+        process_env.update(env)
+    return process_env
+
+
+def _get_sudo_env_vars(env: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+    sudo_env = {
+        "PATH": SANDBOX_PATH,
+        "PLAYWRIGHT_BROWSERS_PATH": PLAYWRIGHT_BROWSERS_PATH,
+    }
+    sudo_env.update(_get_runtime_env_overrides())
+    if env:
+        sudo_env.update(env)
+    return sudo_env
+
+
+def _get_sudo_env_args(env: Optional[Dict[str, str]] = None) -> List[str]:
+    sudo_env = _get_sudo_env_vars(env)
+    return [f"{key}={value}" for key, value in sudo_env.items()]
+
+
+def _get_shell_env_export_cmd(env: Optional[Dict[str, str]] = None) -> str:
+    exports = []
+    for key, value in (env or {}).items():
+        if SHELL_ENV_NAME_RE.match(key):
+            exports.append(f"export {key}={shlex.quote(value)}")
+    return " && ".join(exports) + " && " if exports else ""
+
+
 async def start_interactive_shell(
     cols: int = 80,
     rows: int = 24,
@@ -178,18 +234,13 @@ async def start_interactive_shell(
         import fcntl
 
         # 准备环境变量
-        process_env = {
-            "HOME": str(WORKSPACE_ROOT),
-            "USER": EXEC_USER,
-            "LOGNAME": EXEC_USER,
-            "PATH": SANDBOX_PATH,
-            "PLAYWRIGHT_BROWSERS_PATH": PLAYWRIGHT_BROWSERS_PATH,
-            "SHELL": "/bin/bash",
-            "TERM": "xterm-256color",
-            "LANG": "en_US.UTF-8",
-        }
-        if env:
-            process_env.update(env)
+        process_env = _get_base_process_env(env)
+        process_env.update(
+            {
+                "TERM": "xterm-256color",
+                "LANG": "en_US.UTF-8",
+            }
+        )
 
         pid, master_fd = pty.fork()
 
@@ -200,6 +251,9 @@ async def start_interactive_shell(
 
                 # 获取环境变量注入 source 语句
                 source_cmd = _get_env_file_source()
+                env_export_cmd = _get_shell_env_export_cmd(env)
+
+                env_args = _get_sudo_env_args(env)
 
                 # 准备 sudo 命令参数
                 sudo_cmd = "/usr/bin/sudo"
@@ -208,10 +262,12 @@ async def start_interactive_shell(
                     "-u",
                     EXEC_USER,
                     "-H",
+                    "env",
+                    *env_args,
                     "bash",
                     "-l",
                     "-c",
-                    f"{source_cmd}exec bash -l",  # source 环境变量后替换为 login shell
+                    f"{source_cmd}{env_export_cmd}exec bash -l",
                 ]
 
                 os.execvpe(sudo_cmd, sudo_args, process_env)
@@ -244,16 +300,7 @@ async def run_command(
     """以 shipyard 用户身份运行命令"""
     try:
         # 准备环境变量
-        process_env = {
-            "HOME": str(WORKSPACE_ROOT),
-            "USER": EXEC_USER,
-            "LOGNAME": EXEC_USER,
-            "PATH": SANDBOX_PATH,
-            "PLAYWRIGHT_BROWSERS_PATH": PLAYWRIGHT_BROWSERS_PATH,
-            "SHELL": "/bin/bash",
-        }
-        if env:
-            process_env.update(env)
+        process_env = _get_base_process_env(env)
 
         working_dir = WORKSPACE_ROOT
         if cwd:
@@ -271,16 +318,11 @@ async def run_command(
                     detail=f"Access denied: path must be within workspace: {WORKSPACE_ROOT}",
                 )
 
-        env_args = [
-            f"PATH={SANDBOX_PATH}",
-            f"PLAYWRIGHT_BROWSERS_PATH={PLAYWRIGHT_BROWSERS_PATH}",
-        ]
-        if env:
-            for key, value in env.items():
-                env_args.append(f"{key}={value}")
+        env_args = _get_sudo_env_args(env)
 
         # 获取环境变量注入 source 语句
         source_cmd = _get_env_file_source()
+        env_export_cmd = _get_shell_env_export_cmd(env)
 
         if shell:
             sudo_args = [
@@ -294,7 +336,7 @@ async def run_command(
                 [
                     "bash",
                     "-lc",
-                    f"{source_cmd}cd {shlex.quote(str(working_dir))} && {command}",
+                    f"{source_cmd}{env_export_cmd}cd {shlex.quote(str(working_dir))} && {command}",
                 ]
             )
             logger.debug(

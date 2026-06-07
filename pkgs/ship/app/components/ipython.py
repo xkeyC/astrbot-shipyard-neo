@@ -1,4 +1,6 @@
 import asyncio
+import os
+import shlex
 from typing import Dict, Any, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -6,6 +8,17 @@ from jupyter_client.manager import AsyncKernelManager
 from ..workspace import get_workspace_dir, WORKSPACE_ROOT
 
 router = APIRouter()
+
+PROXY_ENV_KEYS = (
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "NO_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+    "no_proxy",
+)
 
 # 单例内核管理器
 _kernel_manager: Optional[AsyncKernelManager] = None
@@ -68,16 +81,29 @@ def _load_env_file() -> dict[str, str]:
         with open(env_file, "r", encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
-                if line.startswith("export "):
-                    line = line[7:]  # 去掉 "export "
-                if "=" in line:
-                    key, _, value = line.partition("=")
-                    # 去掉单引号和双引号
-                    value = value.strip().strip('"').strip("'")
-                    env_vars[key.strip()] = value
+                if not line or line.startswith("#"):
+                    continue
+                try:
+                    parts = shlex.split(line, posix=True)
+                except ValueError:
+                    continue
+                if parts and parts[0] == "export":
+                    parts = parts[1:]
+                for part in parts:
+                    if "=" in part:
+                        key, _, value = part.partition("=")
+                        env_vars[key.strip()] = value
     except Exception as e:
         print(f"Warning: Failed to load env file: {e}")
 
+    return env_vars
+
+
+def _load_runtime_env() -> dict[str, str]:
+    env_vars = _load_env_file()
+    for key in PROXY_ENV_KEYS:
+        if value := os.environ.get(key):
+            env_vars.setdefault(key, value)
     return env_vars
 
 
@@ -127,7 +153,7 @@ async def _init_kernel_matplotlib(km: AsyncKernelManager):
     kc = km.client()
     try:
         # 组装环境变量注入代码
-        env_vars = _load_env_file()
+        env_vars = _load_runtime_env()
         env_setup_code = ""
         if env_vars:
             env_setup_code = "import os\n"

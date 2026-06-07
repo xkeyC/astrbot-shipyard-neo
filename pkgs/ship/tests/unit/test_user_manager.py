@@ -207,6 +207,51 @@ class TestProcessResult:
         assert result.return_code == 1
 
 
+class TestRuntimeEnv:
+    """Test runtime environment propagation."""
+
+    def test_proxy_env_is_added_to_sudo_env_args(self, monkeypatch):
+        from app.components.user_manager import _get_sudo_env_args
+
+        monkeypatch.setenv("http_proxy", "http://proxy:7890")
+        monkeypatch.setenv("no_proxy", "localhost,127.0.0.1")
+
+        env_args = _get_sudo_env_args()
+
+        assert "http_proxy=http://proxy:7890" in env_args
+        assert "no_proxy=localhost,127.0.0.1" in env_args
+
+    def test_request_env_overrides_runtime_proxy_env(self, monkeypatch):
+        from app.components.user_manager import _get_sudo_env_args
+
+        monkeypatch.setenv("http_proxy", "http://proxy:7890")
+
+        env_args = _get_sudo_env_args({"http_proxy": "http://override:7890"})
+
+        assert "http_proxy=http://override:7890" in env_args
+        assert "http_proxy=http://proxy:7890" not in env_args
+
+    def test_shell_export_cmd_keeps_request_env_override_after_source(self, monkeypatch):
+        from app.components.user_manager import _get_shell_env_export_cmd
+
+        monkeypatch.delenv("HTTP_PROXY", raising=False)
+        monkeypatch.delenv("HTTPS_PROXY", raising=False)
+        monkeypatch.delenv("NO_PROXY", raising=False)
+        monkeypatch.setenv("http_proxy", "http://proxy:7890")
+
+        export_cmd = _get_shell_env_export_cmd({"http_proxy": "http://override:7890"})
+
+        assert "export http_proxy=http://override:7890" in export_cmd
+        assert "export http_proxy=http://proxy:7890" not in export_cmd
+
+    def test_shell_export_cmd_does_not_reexport_runtime_proxy(self, monkeypatch):
+        from app.components.user_manager import _get_shell_env_export_cmd
+
+        monkeypatch.setenv("http_proxy", "http://proxy:7890")
+
+        assert _get_shell_env_export_cmd() == ""
+
+
 class TestBackgroundProcessEntry:
     """Test BackgroundProcessEntry class"""
 

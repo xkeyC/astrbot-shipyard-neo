@@ -37,6 +37,12 @@ services:
       - BAY_DATA_DIR=/app/data
       # To inject a fixed API key instead of auto-generation:
       # - BAY_API_KEY=sk-bay-your-key-here
+      # Runtime proxy for sandbox containers. Build args do not affect
+      # dynamically-created Ship/Gull containers.
+      # - BAY_PROXY__ENABLED=true
+      # - BAY_PROXY__HTTP_PROXY=http://host.docker.internal:7890
+      # - BAY_PROXY__HTTPS_PROXY=http://host.docker.internal:7890
+      # - BAY_PROXY__NO_PROXY=127.0.0.1,localhost,bay,bay-network
     networks:
       - bay-network
     healthcheck:
