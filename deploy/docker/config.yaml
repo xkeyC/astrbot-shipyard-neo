@@ -50,6 +50,13 @@ security:
   api_key: "CHANGE-ME"
   allow_anonymous: false
 
+# ── Shared Browser Service ───────────────────────────────
+# One Chromium process serves all browser-python sandboxes via gull-service.
+# Set enabled: false to revert to per-sandbox Gull containers.
+browser_service:
+  enabled: true
+  endpoint: "http://gull-service:8115"
+
 # Container proxy environment injection.
 # When enabled, Bay injects HTTP(S)_PROXY and NO_PROXY into sandbox containers.
 proxy:
@@ -111,9 +118,10 @@ profiles:
     warm_pool_size: 1
     env: {}
 
-  # ── Browser + Python multi-container sandbox ───────
+  # ── Browser + Python (shared browser pool) ──────────
   - id: browser-python
-    description: "Browser automation with Python backend"
+    description: "Browser automation with Python backend (shared Chromium)"
+    browser: shared  # routes through gull-service, not per-sandbox gull
     containers:
       - name: ship
         image: "ghcr.io/astrbotdevs/shipyard-neo-ship:latest"
@@ -125,20 +133,7 @@ profiles:
         capabilities:
           - python
           - shell
-          - filesystem  # includes upload/download
-        primary_for:
           - filesystem
-          - python
-          - shell
-        env: {}
-      - name: browser
-        image: "ghcr.io/astrbotdevs/shipyard-neo-gull:latest"
-        runtime_type: gull
-        runtime_port: 8115
-        resources:
-          cpus: 1.0
-          memory: "2g"
-        capabilities:
           - browser
         env: {}
     idle_timeout: 43200

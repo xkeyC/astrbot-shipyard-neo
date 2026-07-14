@@ -5,14 +5,13 @@ A thin HTTP wrapper around agent-browser CLI, providing:
 - GET /health: Health check
 - GET /meta: Runtime metadata and capabilities
 
-Architecture:
-- Uses CLI passthrough mode: agent-browser commands are passed as strings
-- Automatically injects --session and --profile parameters
-- --session: mapped to SANDBOX_ID, isolates browser instances
-- --profile: mapped to /workspace/.browser/profile/, persists browser state
-  (cookies, localStorage, IndexedDB, service workers, cache) across
-  container restarts. Cleaned up when Sandbox is deleted (Cargo Volume).
-- Uses asyncio.create_subprocess_exec for non-blocking execution
+Modes (via GULL_MODE env var):
+- single (default): per-sandbox isolated browser (legacy).  Each Gull
+  container serves exactly one sandbox; --session is fixed to SANDBOX_ID.
+- shared: multi-tenant shared browser pool.  One Gull container serves
+  all sandboxes; Chromium is started once on boot; agent-browser --cdp
+  connects to the shared Chromium; --session is set from the request's
+  sandbox_id for per-sandbox isolation.
 """
 
 from __future__ import annotations
@@ -25,12 +24,67 @@ import shlex
 import shutil
 import time
 import tomllib
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
+GULL_MODE = os.environ.get("GULL_MODE", "single")  # "single" | "shared"
+
+# ── Shared-mode path translation ─────────────────────────────────
+# agent-browser commands that accept file paths under /workspace.
+# When running in shared mode, /workspace is translated to the
+# per-sandbox cargo path so that screenshots and uploads land on the
+# correct Cargo volume (not the shared Gull container's local fs).
+_FILE_PATH_COMMANDS = frozenset({"screenshot", "pdf", "upload", "file_server"})
+
+_CARGO_VOLUMES_ROOT = "/cargos"
+
+
+def _translate_and_split(cmd: str, cargo_id: str) -> tuple[list[str], str, str]:
+    """Translate /workspace paths and derive cwd + profile for shared mode.
+
+    First normalizes unsafe browser defaults (notably a bare ``screenshot``)
+    into the shared workspace, then parses the command line with shlex and
+    replaces every argument that starts with ``/workspace`` with the
+    per-sandbox cargo path.  Only file-path commands
+    (screenshot / pdf / upload / file_server) are touched; everything else
+    passes through unchanged.
+
+    Cargo directories are named ``bay-cargo-{cargo_id}`` under
+    ``_CARGO_VOLUMES_ROOT`` (matching the naming convention in
+    ``CargoManager._create_volume``).
+
+    Returns:
+        (argv, cwd, profile_path)
+    """
+    cargo_path = f"{_CARGO_VOLUMES_ROOT}/bay-cargo-{cargo_id}"
+    cmd = _normalize_browser_command(cmd)
+    try:
+        argv = shlex.split(cmd)
+    except ValueError:
+        return [cmd], cargo_path, f"{cargo_path}/.browser/profile"
+
+    if not argv or argv[0] not in _FILE_PATH_COMMANDS:
+        return argv, cargo_path, f"{cargo_path}/.browser/profile"
+
+    for i in range(len(argv)):
+        arg = argv[i]
+        if arg == "/workspace":
+            argv[i] = cargo_path
+        elif arg.startswith("/workspace/"):
+            argv[i] = cargo_path + arg[len("/workspace") :]
+
+    return argv, cargo_path, f"{cargo_path}/.browser/profile"
+
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)-5s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
 logger = logging.getLogger(__name__)
 
 
@@ -67,19 +121,72 @@ _browser_ready: bool = False
 # race when many requests hit Gull at once.
 _browser_ready_lock: asyncio.Lock = asyncio.Lock()
 
+# These are the documented agent-browser screenshot options that consume the
+# following token. Keeping the list explicit prevents their values (especially
+# --screenshot-dir paths) from being mistaken for an output filename, while
+# unknown flags remain untouched for forward compatibility.
+_SCREENSHOT_OPTIONS_WITH_VALUES = frozenset(
+    {
+        "--screenshot-dir",
+        "--screenshot-format",
+        "--screenshot-quality",
+    }
+)
+_SCREENSHOT_PATH_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp")
+
+
+def _is_screenshot_output_path(arg: str) -> bool:
+    """Match the path heuristic used by agent-browser's screenshot parser."""
+    is_relative_path = arg.startswith(("./", "../"))
+    return (
+        is_relative_path
+        or "/" in arg
+        or arg.lower().endswith(_SCREENSHOT_PATH_EXTENSIONS)
+    )
+
 
 def _normalize_browser_command(cmd: str) -> str:
-    """Patch unsafe agent-browser defaults into shared workspace paths."""
+    """Give every pathless screenshot command a unique workspace output.
+
+    ``--full``/``-f`` and ``--annotate`` are boolean screenshot options.
+    The documented ``--screenshot-*`` configuration options above consume one
+    value. Other option tokens are preserved but not assigned invented arity.
+    A positional token is considered an output only when it matches
+    agent-browser's own path heuristic; selector-only screenshots therefore
+    also receive an accessible output path.
+    """
     try:
         parts = shlex.split(cmd)
     except ValueError:
         return cmd
 
-    if parts == ["screenshot"]:
+    if not parts or parts[0] != "screenshot":
+        return cmd
+
+    has_output_path = False
+    index = 1
+    while index < len(parts):
+        arg = parts[index]
+        if arg in _SCREENSHOT_OPTIONS_WITH_VALUES:
+            index += 2
+            continue
+        if any(
+            arg.startswith(f"{option}=")
+            for option in _SCREENSHOT_OPTIONS_WITH_VALUES
+        ):
+            index += 1
+            continue
+        if not arg.startswith("-") and _is_screenshot_output_path(arg):
+            has_output_path = True
+            break
+        index += 1
+
+    if not has_output_path:
         screenshot_path = (
-            f"{WORKSPACE_PATH.rstrip('/')}/screenshot-{int(time.time() * 1000)}.png"
+            f"{WORKSPACE_PATH.rstrip('/')}/screenshot-{uuid.uuid4().hex}.png"
         )
-        return f"screenshot {shlex.quote(str(screenshot_path))}"
+        parts.append(screenshot_path)
+        return shlex.join(parts)
 
     return cmd
 
@@ -146,10 +253,23 @@ async def _ensure_browser_ready() -> None:
 
 
 class ExecRequest(BaseModel):
-    """Request to execute an agent-browser command."""
+    """Request to execute an agent-browser command.
+
+    In shared mode, sandbox_id is required for session isolation.
+    In single mode, sandbox_id is ignored (uses global SANDBOX_ID).
+
+    cargo_id is used in shared mode to translate /workspace paths to the
+    per-sandbox Cargo volume's real filesystem path.
+    """
 
     cmd: str = Field(
         ..., description="agent-browser command (without 'agent-browser' prefix)"
+    )
+    sandbox_id: str | None = Field(
+        default=None, description="Sandbox ID for session isolation (shared mode)"
+    )
+    cargo_id: str | None = Field(
+        default=None, description="Cargo volume ID for path translation (shared mode)"
     )
     timeout: int = Field(default=30, description="Timeout in seconds", ge=1, le=300)
 
@@ -172,6 +292,12 @@ class BatchExecRequest(BaseModel):
         default=60, ge=1, le=600, description="Overall timeout (seconds)"
     )
     stop_on_error: bool = Field(default=True, description="Stop if a command fails")
+    sandbox_id: str | None = Field(
+        default=None, description="Sandbox ID for session isolation (shared mode)"
+    )
+    cargo_id: str | None = Field(
+        default=None, description="Cargo volume ID for path translation (shared mode)"
+    )
 
 
 class BatchStepResult(BaseModel):
@@ -342,47 +468,54 @@ def _parse_frontmatter(text: str) -> dict:
 async def lifespan(app: FastAPI):
     """Application lifespan manager.
 
-    On startup:
-    - Ensure browser profile directory exists on Cargo Volume.
-    - Pre-warm Chromium browser by opening about:blank.
-      This triggers Playwright + Chromium initialization so subsequent
-      commands don't incur cold-start latency.
-    - agent-browser --profile automatically restores persisted state
-      (cookies, localStorage, etc.) on first command.
-
-    On shutdown:
-    - Close the browser session. agent-browser --profile automatically
-      persists state to the profile directory.
-
-    Note: Built-in skills injection is handled by entrypoint.sh (shell layer),
-    not in Python lifespan, for security and consistency with Ship.
+    In single mode: pre-warm browser via agent-browser daemon.
+    In shared mode: start shared Chromium, no per-command profile needed.
     """
     global _browser_ready
 
-    # Ensure profile dir exists on shared Cargo Volume
-    os.makedirs(BROWSER_PROFILE_DIR, exist_ok=True)
-    print(f"[gull] Starting Gull v{GULL_VERSION}, session={SESSION_NAME}")
-    print(f"[gull] Browser profile dir: {BROWSER_PROFILE_DIR}")
+    if GULL_MODE == "shared":
+        # ── Shared mode ──────────────────────────────────────────────
+        from app.session import start_shared_chromium, stop_shared_chromium
 
-    # Pre-warm browser: start agent-browser daemon + Chromium via `open about:blank`.
-    # Failure does NOT block service startup (graceful degradation).
+        logger.info(
+            "[gull] Starting in shared mode (CDP port=9222), version=%s", GULL_VERSION
+        )
+        try:
+            await start_shared_chromium()
+            _browser_ready = True
+            logger.info("[gull] Shared Chromium started")
+        except Exception as e:
+            _browser_ready = False
+            logger.error("[gull] Failed to start shared Chromium: %s", e)
+
+        yield
+
+        logger.info("[gull] Shutting down shared mode...")
+        await stop_shared_chromium()
+        _browser_ready = False
+        logger.info("[gull] Shared Chromium stopped.")
+        return
+
+    # ── Single mode (legacy) ────────────────────────────────────────
+    os.makedirs(BROWSER_PROFILE_DIR, exist_ok=True)
+    logger.info("[gull] Starting Gull v%s, session=%s", GULL_VERSION, SESSION_NAME)
+    logger.info("[gull] Browser profile dir: %s", BROWSER_PROFILE_DIR)
+
     try:
-        print("[gull] Pre-warming browser (open about:blank)...")
+        logger.info("[gull] Pre-warming browser (open about:blank)...")
         await _ensure_browser_ready()
         if _browser_ready:
-            print("[gull] Browser pre-warmed successfully")
+            logger.info("[gull] Browser pre-warmed successfully")
         else:
-            print(
+            logger.warning(
                 "[gull] Browser pre-warm did not complete (will fall back to per-command --profile)"
             )
     except Exception as e:
-        # Pre-warm failure is not fatal; first user command will trigger startup
-        print(f"[gull] Failed to pre-warm browser: {e}")
+        logger.warning("[gull] Failed to pre-warm browser: %s", e)
 
     yield
 
-    # Shutdown: close browser (profile auto-persists state)
-    print("[gull] Shutting down, closing browser...")
+    logger.info("[gull] Shutting down, closing browser...")
     await _run_agent_browser(
         "close",
         session=SESSION_NAME,
@@ -407,17 +540,45 @@ async def exec_command(request: ExecRequest) -> ExecResponse:
     The command is transparently passed to the agent-browser CLI with
     automatic --session injection for browser context isolation.
 
+    In shared mode, uses sandbox_id from request for --session isolation
+    connecting to the shared Chromium via --cdp.  When cargo_id is also
+    provided, /workspace paths are translated to the per-sandbox Cargo
+    volume so screenshots and uploads land on the correct filesystem.
+
     Examples:
         {"cmd": "open https://example.com"}
         {"cmd": "snapshot -i"}
-        {"cmd": "click @e1"}
-        {"cmd": "fill @e2 'hello world'"}
         {"cmd": "screenshot /workspace/page.png"}
     """
-    # Make sure readiness is evaluated even if lifespan pre-warm didn't run yet.
-    await _ensure_browser_ready()
+    sandbox_id = request.sandbox_id
 
-    # If readiness probe/pre-warm succeeded, omit --profile to avoid agent-browser daemon warnings.
+    if GULL_MODE == "shared" and sandbox_id:
+        # ── Shared mode ────────────────────────────────────────
+        if request.cargo_id:
+            argv, cwd, profile_path = _translate_and_split(
+                request.cmd, request.cargo_id
+            )
+            from app.session import execute_browser_raw
+
+            stdout, stderr, exit_code = await execute_browser_raw(
+                sandbox_id,
+                argv,
+                cwd=cwd,
+                profile=profile_path,
+                timeout=request.timeout,
+            )
+        else:
+            from app.session import execute_browser
+
+            stdout, stderr, exit_code = await execute_browser(
+                sandbox_id,
+                request.cmd,
+                timeout=request.timeout,
+            )
+        return ExecResponse(stdout=stdout, stderr=stderr, exit_code=exit_code)
+
+    # ── Single mode (legacy) ────────────────────────────────────────
+    await _ensure_browser_ready()
     profile = None if _browser_ready else BROWSER_PROFILE_DIR
     stdout, stderr, exit_code = await _run_agent_browser(
         request.cmd,
@@ -425,57 +586,59 @@ async def exec_command(request: ExecRequest) -> ExecResponse:
         profile=profile,
         timeout=request.timeout,
     )
-
-    return ExecResponse(
-        stdout=stdout,
-        stderr=stderr,
-        exit_code=exit_code,
-    )
+    return ExecResponse(stdout=stdout, stderr=stderr, exit_code=exit_code)
 
 
 @app.post("/exec_batch", response_model=BatchExecResponse)
 async def exec_batch(request: BatchExecRequest) -> BatchExecResponse:
     """Execute a batch of agent-browser commands sequentially.
 
-    Loops over commands calling _run_agent_browser() for each.
-    Tracks per-step timing and respects overall timeout budget.
-    If stop_on_error is True, stops on first non-zero exit code.
-
-    Examples:
-        {
-            "commands": [
-                "open https://example.com",
-                "wait --load networkidle",
-                "snapshot -i"
-            ],
-            "timeout": 60,
-            "stop_on_error": true
-        }
+    In shared mode, sandbox-aware with optional cargo path translation;
+    in single mode, uses legacy session.
     """
-    # Make sure readiness is evaluated even if lifespan pre-warm didn't run yet.
-    await _ensure_browser_ready()
-
+    sandbox_id = getattr(request, "sandbox_id", None)
+    cargo_id = getattr(request, "cargo_id", None)
     batch_start = time.perf_counter()
     results: list[BatchStepResult] = []
 
     for i, cmd in enumerate(request.commands):
-        # Calculate remaining timeout budget
         elapsed = time.perf_counter() - batch_start
         remaining_timeout = request.timeout - elapsed
         if remaining_timeout <= 0:
             break
 
         step_start = time.perf_counter()
-        # If lifespan pre-warm succeeded, omit --profile to avoid agent-browser daemon warnings.
-        profile = None if _browser_ready else BROWSER_PROFILE_DIR
-        stdout, stderr, exit_code = await _run_agent_browser(
-            cmd,
-            session=SESSION_NAME,
-            profile=profile,
-            timeout=remaining_timeout,
-        )
-        step_duration_ms = int((time.perf_counter() - step_start) * 1000)
 
+        if GULL_MODE == "shared" and sandbox_id:
+            if cargo_id:
+                argv, cwd, profile_path = _translate_and_split(cmd, cargo_id)
+                from app.session import execute_browser_raw
+
+                stdout, stderr, exit_code = await execute_browser_raw(
+                    sandbox_id,
+                    argv,
+                    cwd=cwd,
+                    profile=profile_path,
+                    timeout=remaining_timeout,
+                )
+            else:
+                from app.session import execute_browser
+
+                stdout, stderr, exit_code = await execute_browser(
+                    sandbox_id,
+                    cmd,
+                    timeout=remaining_timeout,
+                )
+        else:
+            profile = None if _browser_ready else BROWSER_PROFILE_DIR
+            stdout, stderr, exit_code = await _run_agent_browser(
+                cmd,
+                session=SESSION_NAME,
+                profile=profile,
+                timeout=remaining_timeout,
+            )
+
+        step_duration_ms = int((time.perf_counter() - step_start) * 1000)
         results.append(
             BatchStepResult(
                 cmd=cmd,
@@ -486,12 +649,10 @@ async def exec_batch(request: BatchExecRequest) -> BatchExecResponse:
                 duration_ms=step_duration_ms,
             )
         )
-
         if request.stop_on_error and exit_code != 0:
             break
 
     total_duration_ms = int((time.perf_counter() - batch_start) * 1000)
-
     return BatchExecResponse(
         results=results,
         total_steps=len(request.commands),
@@ -508,21 +669,25 @@ async def exec_batch(request: BatchExecRequest) -> BatchExecResponse:
 async def health() -> HealthResponse:
     """Health check endpoint.
 
-    Checks if agent-browser is installed, if a browser session is active,
-    and whether the browser has been pre-warmed and is ready to accept commands.
-
-    The `browser_ready` field indicates whether Chromium was successfully
-    pre-warmed during startup. Bay uses this field in _wait_for_ready()
-    to determine when a Gull session is truly operational.
-
-    Status values:
-    - "healthy": agent-browser CLI is available and responsive
-    - "degraded": agent-browser exists but CLI probe failed
-    - "unhealthy": agent-browser binary not found
+    In shared mode: checks Chromium is alive via CDP port.
+    In single mode: checks agent-browser daemon is responsive.
     """
-    # Check if agent-browser is available
-    agent_browser_available = shutil.which("agent-browser") is not None
+    # ── Shared mode ──────────────────────────────────────────────────
+    if GULL_MODE == "shared":
+        from app.session import check_chromium_health
 
+        chromium_ok = await check_chromium_health()
+        agent_ok = shutil.which("agent-browser") is not None
+        return HealthResponse(
+            status="healthy" if (chromium_ok and agent_ok) else "degraded",
+            browser_active=chromium_ok,
+            browser_ready=chromium_ok,
+            session="shared",
+            version=GULL_VERSION,
+        )
+
+    # ── Single mode (legacy) ────────────────────────────────────────
+    agent_browser_available = shutil.which("agent-browser") is not None
     if not agent_browser_available:
         return HealthResponse(
             status="unhealthy",
@@ -552,6 +717,20 @@ async def health() -> HealthResponse:
         session=SESSION_NAME,
         version=GULL_VERSION,
     )
+
+
+@app.delete("/sessions/{sandbox_id}")
+async def delete_session(sandbox_id: str) -> dict:
+    """Destroy a browser session for a sandbox (shared mode only).
+
+    Calls agent-browser close for the session daemon.  Best-effort —
+    returns successfully even if the session was already gone.
+    """
+    if GULL_MODE == "shared":
+        from app.session import destroy_session
+
+        await destroy_session(sandbox_id)
+    return {"sandbox_id": sandbox_id, "destroyed": True}
 
 
 @app.get("/meta", response_model=MetaResponse)

@@ -17,7 +17,6 @@ from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
 import httpx
-import pytest
 
 from ..conftest import (
     AUTH_HEADERS,
@@ -25,8 +24,8 @@ from ..conftest import (
     CLEANUP_TIMEOUT,
     DEFAULT_PROFILE,
     DEFAULT_TIMEOUT,
-    create_sandbox,
     cargo_volume_exists,
+    create_sandbox,
     e2e_skipif_marks,
 )
 
@@ -169,7 +168,7 @@ async def test_list_cargos_default_returns_external_only():
         # Create an external cargo
         async with create_cargo(client) as ext_cargo:
             # Create a sandbox (creates managed cargo)
-            async with create_sandbox(client) as sandbox:
+            async with create_sandbox(client) as _sandbox:
                 # List without managed param - should only show external
                 resp = await client.get("/v1/cargos", timeout=DEFAULT_TIMEOUT)
                 assert resp.status_code == 200

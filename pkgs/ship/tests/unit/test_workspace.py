@@ -3,7 +3,6 @@ Unit tests for workspace module.
 """
 
 import pytest
-from pathlib import Path
 from unittest.mock import patch
 from fastapi import HTTPException
 

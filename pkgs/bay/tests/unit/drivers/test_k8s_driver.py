@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.drivers.base import ContainerStatus, RuntimeInstance
+from app.drivers.base import ContainerStatus
 from app.drivers.k8s.k8s import K8sDriver, _parse_memory, _parse_storage_size
 
 if TYPE_CHECKING:

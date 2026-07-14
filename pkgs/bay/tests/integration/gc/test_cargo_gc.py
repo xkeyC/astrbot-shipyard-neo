@@ -14,7 +14,6 @@ from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
 import httpx
-import pytest
 
 from ..conftest import (
     AUTH_HEADERS,

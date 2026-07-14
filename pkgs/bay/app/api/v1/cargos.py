@@ -150,7 +150,8 @@ async def list_cargos(
     cursor: str | None = Query(None),
     managed: bool | None = Query(
         None,
-        description="Filter by managed status. Default (null/omitted) returns only external cargos (managed=false). "
+        description="Filter by managed status. "
+        "Default (null/omitted) returns only external cargos (managed=false). "
         "Set to true to see managed cargos only.",
     ),
 ) -> CargoListResponse:

@@ -17,12 +17,12 @@ from sqlalchemy.orm import sessionmaker
 from sqlmodel import SQLModel, select
 
 from app.config import ProfileConfig, ResourceSpec, Settings
+from app.drivers.base import ContainerInfo, ContainerStatus
 from app.errors import SessionNotReadyError
 from app.managers.session import SessionManager
 from app.models.cargo import Cargo
 from app.models.sandbox import Sandbox
 from app.models.session import Session, SessionStatus
-from app.drivers.base import ContainerInfo, ContainerStatus
 from tests.fakes import FakeDriver
 
 

@@ -1,0 +1,83 @@
+# Gull Service — Shared Browser Pool
+#
+# Long-running shared Chromium for all browser-python sandboxes.
+# Bay routes browser capability requests here instead of creating
+# per-sandbox Gull containers.
+#
+# One Chromium process serves all sandboxes via agent-browser --cdp
+# (connect to external Chromium) + --session (per-sandbox daemon isolation).
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gull-service
+  namespace: bay
+  labels:
+    app.kubernetes.io/name: gull-service
+    app.kubernetes.io/part-of: shipyard-neo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: gull-service
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: gull-service
+        app.kubernetes.io/part-of: shipyard-neo
+    spec:
+      containers:
+        - name: gull
+          image: ghcr.io/astrbotdevs/shipyard-neo-gull:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8115
+              protocol: TCP
+          env:
+            - name: GULL_MODE
+              value: "shared"
+            - name: GULL_CDP_PORT
+              value: "9222"
+            - name: AGENT_BROWSER_IDLE_TIMEOUT_MS
+              value: "600000"
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2"
+              memory: "2Gi"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8115
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8115
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+      restartPolicy: Always
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gull-service
+  namespace: bay
+  labels:
+    app.kubernetes.io/name: gull-service
+    app.kubernetes.io/part-of: shipyard-neo
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: gull-service
+  ports:
+    - name: http
+      port: 8115
+      targetPort: 8115
+      protocol: TCP

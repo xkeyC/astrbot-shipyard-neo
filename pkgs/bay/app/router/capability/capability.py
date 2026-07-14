@@ -35,10 +35,31 @@ class CapabilityRouter:
         sandbox_mgr: SandboxManager,
         *,
         adapter_pool: AdapterPool[BaseAdapter] | None = None,
+        shared_gull: BaseAdapter | None = None,
     ) -> None:
         self._sandbox_mgr = sandbox_mgr
         self._log = logger.bind(component="capability_router")
         self._adapter_pool = default_adapter_pool if adapter_pool is None else adapter_pool
+
+        # Auto-detect shared Gull from config if not explicitly passed
+        if shared_gull is None:
+            try:
+                from app.adapters.shared_gull import SharedGullAdapter
+                from app.config import get_settings
+
+                settings = get_settings()
+                if (
+                    hasattr(settings, "browser_service")
+                    and settings.browser_service
+                    and getattr(settings.browser_service, "enabled", False)
+                ):
+                    endpoint = settings.browser_service.endpoint
+                    self._log.info("shared_gull.enabled", endpoint=endpoint)
+                    shared_gull = SharedGullAdapter(endpoint)
+            except Exception:
+                pass  # Not configured or import error — use per-sandbox mode
+
+        self._shared_gull = shared_gull
 
     async def ensure_session(self, sandbox: Sandbox) -> Session:
         """Ensure sandbox has a running session.
@@ -243,27 +264,32 @@ class CapabilityRouter:
     ) -> ExecutionResult:
         """Execute browser automation command in sandbox.
 
-        Phase 2: Routes to the Gull container via CLI passthrough.
-
-        Args:
-            sandbox: Target sandbox
-            cmd: agent-browser command (without prefix)
-            timeout: Execution timeout in seconds
-
-        Returns:
-            Execution result
+        Routes to shared Gull Service when available (browser:shared profile),
+        otherwise uses per-sandbox Gull container.
         """
+        # Shared browser path: no container needed
+        if self._shared_gull is not None:
+            self._log.info(
+                "capability.browser.exec_shared",
+                sandbox_id=sandbox.id,
+                cmd=cmd[:100],
+            )
+            return await self._shared_gull.exec_browser(
+                cmd,
+                sandbox_id=sandbox.id,
+                cargo_id=sandbox.cargo_id,
+                timeout=timeout,
+            )
+
         session = await self.ensure_session(sandbox)
         adapter = self._get_adapter(session, capability="browser")
         await self._require_capability(adapter, "browser")
-
         self._log.info(
             "capability.browser.exec",
             sandbox_id=sandbox.id,
             session_id=session.id,
             cmd=cmd[:100],
         )
-
         return await adapter.exec_browser(cmd, timeout=timeout)
 
     async def exec_browser_batch(
@@ -276,17 +302,40 @@ class CapabilityRouter:
     ) -> dict[str, Any]:
         """Execute a batch of browser automation commands in sandbox.
 
-        Phase 2: Routes to the Gull container batch endpoint.
-
-        Args:
-            sandbox: Target sandbox
-            commands: List of agent-browser commands (without prefix)
-            timeout: Overall timeout in seconds for all commands
-            stop_on_error: Whether to stop on first failure
-
-        Returns:
-            Raw batch result dict
+        Routes to shared Gull Service when available, otherwise per-sandbox.
         """
+        # Shared browser path
+        if self._shared_gull is not None:
+            self._log.info(
+                "capability.browser.exec_batch_shared",
+                sandbox_id=sandbox.id,
+                n_cmds=len(commands),
+            )
+            results = await self._shared_gull.exec_browser_batch(
+                commands,
+                sandbox_id=sandbox.id,
+                cargo_id=sandbox.cargo_id,
+                timeout=timeout,
+                stop_on_error=stop_on_error,
+            )
+            return {
+                "results": [
+                    {
+                        "cmd": c,
+                        "stdout": r.output,
+                        "stderr": r.error,
+                        "exit_code": r.exit_code,
+                        "step_index": i,
+                        "duration_ms": 0,
+                    }
+                    for i, (c, r) in enumerate(zip(commands, results))
+                ],
+                "total_steps": len(commands),
+                "completed_steps": len(results),
+                "success": all(r.success for r in results),
+                "duration_ms": 0,
+            }
+
         session = await self.ensure_session(sandbox)
         adapter = self._get_adapter(session, capability="browser")
         await self._require_capability(adapter, "browser")

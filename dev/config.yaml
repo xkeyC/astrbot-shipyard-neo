@@ -1,0 +1,100 @@
+# Dev Config — local build, zero remote pull
+#
+# Images are tagged as shipyard-neo/{bay|ship|gull}:dev and built
+# from local Dockerfiles.  image_pull_policy: never ensures no
+# remote registry access.
+
+server:
+  host: "0.0.0.0"
+  port: 8114
+
+database:
+  url: "sqlite+aiosqlite:///./data/bay.db"
+  echo: false
+
+driver:
+  type: docker
+  image_pull_policy: never
+
+  docker:
+    socket: "unix:///var/run/docker.sock"
+    connect_mode: container_network
+    network: "shipyard-dev"
+    publish_ports: false
+    host_port: null
+
+cargo:
+  root_path: "/bay/cargos"
+  host_root_path: "/workspace/projects/shipyard-neo/dev/bay-cargos"
+  default_size_limit_mb: 1024
+  mount_path: "/workspace"
+
+security:
+  allow_anonymous: true
+  api_key: "sk-bay-dev-local"
+
+# Global shared browser service — all browser:shared profiles route here
+browser_service:
+  enabled: true
+  endpoint: "http://gull-service:8115"
+
+profiles:
+  # ── Single-container python sandbox ──────────────────
+  - id: python-default
+    image: "shipyard-neo/ship:dev"
+    runtime_type: ship
+    runtime_port: 8123
+    resources:
+      cpus: 1.0
+      memory: "1g"
+    capabilities:
+      - filesystem
+      - shell
+      - python
+    idle_timeout: 600
+    warm_pool_size: 1
+    env: {}
+
+  # ── Shared browser + python (uses global Gull Service) ──
+  - id: browser-python
+    description: "Browser automation + Python (shared browser pool)"
+    browser: shared                           # ← routes through gull-service
+    containers:
+      - name: ship
+        image: "shipyard-neo/ship:dev"
+        runtime_type: ship
+        runtime_port: 8123
+        resources:
+          cpus: 1.0
+          memory: "1g"
+        capabilities:
+          - python
+          - shell
+          - filesystem
+          - browser
+        env: {}
+    idle_timeout: 600
+    warm_pool_size: 1
+
+warm_pool:
+  enabled: true
+  warmup_queue_workers: 2
+  warmup_queue_max_size: 16
+  warmup_queue_drop_policy: "drop_newest"
+  warmup_queue_drop_alert_threshold: 10
+  interval_seconds: 30
+  run_on_startup: true
+
+gc:
+  enabled: true
+  run_on_startup: true
+  interval_seconds: 60
+  instance_id: "shipyard-dev"
+  idle_session:
+    enabled: true
+  expired_sandbox:
+    enabled: true
+  orphan_cargo:
+    enabled: true
+  orphan_container:
+    enabled: true

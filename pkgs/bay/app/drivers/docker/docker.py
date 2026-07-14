@@ -20,6 +20,8 @@ Note: runtime_port is provided by ProfileConfig (do not hardcode Ship port here)
 from __future__ import annotations
 
 import asyncio
+import shutil
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import aiodocker
@@ -41,6 +43,9 @@ if TYPE_CHECKING:
     from app.models.session import Session
 
 logger = structlog.get_logger()
+
+# Sentinel for uninitialised cached value (None means "resolved to no host root").
+_UNSET = object()
 
 # Cargo mount path inside container (fixed)
 WORKSPACE_MOUNT_PATH = "/workspace"
@@ -83,6 +88,55 @@ class DockerDriver(Driver):
 
         self._log = logger.bind(driver="docker")
         self._client: aiodocker.Docker | None = None
+        # Cached host-side cargo root path, resolved once on first use.
+        self._resolved_host_root: str | None | _UNSET = _UNSET
+
+    async def _resolve_host_root(self) -> str | None:
+        """Resolve the host-side path for the cargo root mount point.
+
+        Priority:
+        1. Explicit ``cargo.host_root_path`` in config.
+        2. Auto-detection: parse ``/proc/self/mountinfo`` to find the
+           host-side source of the cargo root bind mount.  This works
+           regardless of cgroup version or container runtime.
+
+        Result is cached after first resolution — the host path doesn't
+        change during Bay's lifetime.
+
+        Returns None when no bind-mount-capable host path can be determined
+        (named volumes will be used instead).
+        """
+        if self._resolved_host_root is not _UNSET:
+            return self._resolved_host_root  # type: ignore[return-value]
+
+        settings = get_settings()
+
+        # 1. Explicit config always wins.
+        if settings.cargo.host_root_path:
+            self._resolved_host_root = settings.cargo.host_root_path
+            return self._resolved_host_root
+
+        # 2. Auto-detect via /proc/self/mountinfo.
+        root_path = settings.cargo.root_path.rstrip("/")
+        try:
+            with open("/proc/self/mountinfo") as f:
+                for line in f:
+                    # Format: id parent major:minor root mount_point opts - type dev opts
+                    parts = line.split()
+                    if len(parts) >= 5 and parts[4].rstrip("/") == root_path:
+                        host_source = parts[3]  # "root" field = host-side path
+                        self._log.info(
+                            "docker.host_root.resolved",
+                            mount_dest=root_path,
+                            mount_source=host_source,
+                        )
+                        self._resolved_host_root = host_source
+                        return host_source
+        except Exception:
+            self._log.debug("docker.host_root.mountinfo_failed")
+
+        self._resolved_host_root = None
+        return None
 
     async def _get_client(self) -> aiodocker.Docker:
         """Get or create the aiodocker client."""
@@ -459,49 +513,67 @@ class DockerDriver(Driver):
     # Volume management
 
     async def create_volume(self, name: str, labels: dict[str, str] | None = None) -> str:
-        """Create a Docker volume."""
+        """Create a cargo volume.
+
+        When a host-side path can be resolved (explicit config or auto-detection
+        via self-inspection): creates a plain directory at that path (bind mount)
+        and returns the host path.  Used for shared browser deployments where
+        Gull needs access to per-sandbox cargo directories.
+
+        Otherwise creates a Docker named volume.  The name is used directly in
+        Binds and Docker resolves it from the daemon's volume store — the right
+        default when Bay runs inside a container with no host filesystem knowledge.
+        """
+        host_root = await self._resolve_host_root()
+
+        if host_root:
+            # Bind-mount mode: directory on the Docker host
+            cargo_path = Path(host_root) / name
+            cargo_path.mkdir(parents=True, exist_ok=True)
+            self._log.info("docker.create_volume.bind", name=name, path=str(cargo_path))
+            return str(cargo_path)
+
+        # Named-volume mode: Docker manages the volume lifecycle
         client = await self._get_client()
-        self._log.info("docker.create_volume", name=name)
-
-        volume_labels = {"bay.managed": "true"}
-        if labels:
-            volume_labels.update(labels)
-
-        volume = await client.volumes.create(
-            {
-                "Name": name,
-                "Labels": volume_labels,
-            }
-        )
-
-        # aiodocker returns DockerVolume object, get name from it
-        return volume.name
+        await client.volumes.create({"Name": name, "Labels": labels or {}})
+        self._log.info("docker.create_volume.named", name=name)
+        return name
 
     async def delete_volume(self, name: str) -> None:
-        """Delete a Docker volume."""
-        client = await self._get_client()
-        self._log.info("docker.delete_volume", name=name)
+        """Delete a cargo volume (directory or named volume)."""
+        host_root = await self._resolve_host_root()
 
-        try:
-            volume = await client.volumes.get(name)
-            await volume.delete()
-        except DockerError as e:
-            if e.status == 404:
+        if host_root:
+            # Bind-mount mode: name is already a host path, delete directory
+            cargo_path = Path(name)
+            if cargo_path.exists():
+                shutil.rmtree(cargo_path, ignore_errors=True)
+            self._log.info("docker.delete_volume.bind", path=str(cargo_path))
+        else:
+            # Named-volume mode: name is volume name
+            try:
+                client = await self._get_client()
+                vol = await client.volumes.get(name)
+                await vol.delete()
+                self._log.info("docker.delete_volume.named", name=name)
+            except DockerError:
                 self._log.warning("docker.delete_volume.not_found", name=name)
-            else:
-                raise
 
     async def volume_exists(self, name: str) -> bool:
-        """Check if volume exists."""
-        client = await self._get_client()
+        """Check if cargo volume exists."""
+        host_root = await self._resolve_host_root()
 
+        if host_root:
+            # Bind-mount mode: name is already the host path
+            return Path(name).is_dir()
+
+        # Named-volume mode
         try:
+            client = await self._get_client()
             await client.volumes.get(name)
             return True
-        except DockerError as e:
-            if e.status == 404:
-                return False
-            raise
+        except DockerError:
+            return False
 
     # Runtime instance discovery (for GC)
 
@@ -668,6 +740,7 @@ class DockerDriver(Driver):
         network_name: str,
         extra_labels: dict[str, str] | None = None,
         profile_proxy: "ProxyConfig | None" = None,
+        connect_bay_network: bool = False,
     ) -> tuple[dict[str, Any], str]:
         """Build Docker container config for a single ContainerSpec.
 
@@ -725,7 +798,12 @@ class DockerDriver(Driver):
             ]
         )
 
-        # Host config
+        # Host config.
+        # NetworkMode = session network (primary): provides Docker's embedded
+        # DNS resolver (127.0.0.11) so containers can resolve external domains
+        # and discover each other by container-name / hostname.
+        # The bay-network is attached separately via EndpointsConfig below.
+        # No conflict because the two networks are *different*.
         host_config: dict[str, Any] = {
             "Binds": [f"{cargo.driver_ref}:{WORKSPACE_MOUNT_PATH}:rw"],
             "Memory": mem_limit,
@@ -751,14 +829,20 @@ class DockerDriver(Driver):
             }
             host_config["PortBindings"] = port_bindings
 
-        # Networking config with alias = container spec name
-        networking_config = {
-            "EndpointsConfig": {
-                network_name: {
-                    "Aliases": [spec.name],
+        # Networking config: attach bay-network if it differs from the
+        # session network.  Session network is already the primary via
+        # NetworkMode — putting the same network here would be a duplicate
+        # and risk container.start() being rejected on some Docker versions.
+        # Container-to-container DNS works without explicit Aliases because
+        # Docker auto-registers container-name and hostname on all
+        # user-defined networks.
+        networking_config: dict[str, Any] | None = None
+        if connect_bay_network and self._network and self._network != network_name:
+            networking_config = {
+                "EndpointsConfig": {
+                    self._network: {},
                 }
             }
-        }
 
         config: dict[str, Any] = {
             "Image": spec.image,
@@ -767,8 +851,10 @@ class DockerDriver(Driver):
             "HostConfig": host_config,
             "ExposedPorts": exposed_ports,
             "Hostname": spec.name,
-            "NetworkingConfig": networking_config,
         }
+        # Only include NetworkingConfig when there are additional networks
+        if networking_config is not None:
+            config["NetworkingConfig"] = networking_config
 
         return config, container_name
 
@@ -835,6 +921,7 @@ class DockerDriver(Driver):
                 network_name=network_name,
                 extra_labels=labels,
                 profile_proxy=profile.proxy,
+                connect_bay_network=connect_bay_network,
             )
 
             self._log.info(
@@ -850,25 +937,6 @@ class DockerDriver(Driver):
                     config=config,
                     name=container_name,
                 )
-
-                # Also connect to Bay's global network so Bay can reach
-                # the container via container IP.
-                if connect_bay_network:
-                    try:
-                        bay_net = await client.networks.get(self._network)
-                        await bay_net.connect({"Container": container.id})
-                        self._log.debug(
-                            "docker.create_multi.connected_bay_network",
-                            container_name=container_name,
-                            bay_network=self._network,
-                        )
-                    except DockerError as net_err:
-                        self._log.warning(
-                            "docker.create_multi.connect_bay_network_failed",
-                            container_name=container_name,
-                            bay_network=self._network,
-                            error=str(net_err),
-                        )
 
                 results.append(
                     MultiContainerInfo(

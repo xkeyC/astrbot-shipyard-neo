@@ -13,8 +13,8 @@ Key design decisions (from §2.5 / §2.5.1):
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Literal
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import structlog
 

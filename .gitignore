@@ -9,3 +9,6 @@ scripts/
 .claude/
 camel/
 .agent/
+.rcoder/
+dev/bay-data/
+dev/bay-cargos/

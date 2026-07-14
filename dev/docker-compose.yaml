@@ -1,0 +1,77 @@
+# Shipyard Neo — Dev Compose
+#
+# Builds everything from local source.  Zero remote image pulls.
+#
+# Quick start:
+#   make build-all    # build bay + ship + gull images
+#   make up           # start bay
+#   make down         # stop everything
+#
+# Bay creates ship/gull containers on the shared network via Docker API.
+# Those images must be built once before use (see Makefile or 'build' profile).
+
+services:
+  # ── Gull Service (shared browser pool) ─────────────────
+  # Long-running shared Chromium. Mounts the cargo root so it can
+  # translate /workspace → /cargos/bay-cargo-{id} for screenshots/uploads.
+  gull-service:
+    image: shipyard-neo/gull:dev
+    container_name: shipyard-dev-gull
+    restart: unless-stopped
+    environment:
+      - GULL_MODE=shared
+      - GULL_CDP_PORT=9222
+      - AGENT_BROWSER_IDLE_TIMEOUT_MS=600000  # 10 min
+    volumes:
+      - ./bay-cargos:/cargos:rw
+    networks:
+      - shipyard-dev
+
+  # ── Bay (control plane) ──────────────────────────────
+  bay:
+    build:
+      context: ../pkgs/bay
+      dockerfile: Dockerfile
+    image: shipyard-neo/bay:dev
+    container_name: shipyard-dev-bay
+    restart: unless-stopped
+    ports:
+      - "8114:8114"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./config.yaml:/app/config.yaml:ro
+      - ./bay-data:/app/data
+      - ./bay-cargos:/bay/cargos
+    environment:
+      - BAY_CONFIG_FILE=/app/config.yaml
+    networks:
+      - shipyard-dev
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8114/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  # ── One-shot image builders (profile: build) ─────────
+  # Run once: docker compose --profile build build
+  ship:
+    profiles: ["build"]
+    build:
+      context: ../pkgs/ship
+      dockerfile: Dockerfile
+    image: shipyard-neo/ship:dev
+    command: ["true"]
+
+  gull:
+    profiles: ["build"]
+    build:
+      context: ../pkgs/gull
+      dockerfile: Dockerfile
+    image: shipyard-neo/gull:dev
+    command: ["true"]
+
+networks:
+  shipyard-dev:
+    name: shipyard-dev
+    driver: bridge

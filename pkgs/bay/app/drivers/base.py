@@ -27,7 +27,7 @@ from enum import Enum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from app.config import ContainerSpec, ProfileConfig
+    from app.config import ProfileConfig
     from app.models.cargo import Cargo
     from app.models.session import Session
 

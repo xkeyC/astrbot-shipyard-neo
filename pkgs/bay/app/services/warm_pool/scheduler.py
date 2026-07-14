@@ -10,7 +10,6 @@ Responsibilities (from §4.5):
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta
 from typing import TYPE_CHECKING
 
 import structlog

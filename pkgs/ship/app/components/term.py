@@ -128,7 +128,7 @@ async def websocket_terminal(
         logger.info("Terminal session started")
 
         # Start PTY reader in background
-        read_task = asyncio.create_task(terminal.start_reader(websocket))
+        asyncio.create_task(terminal.start_reader(websocket))
 
         # Handle incoming WebSocket messages
         while True:

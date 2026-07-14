@@ -10,8 +10,6 @@ Tests:
 
 from __future__ import annotations
 
-import pytest
-
 from app.config import ContainerSpec, ProfileConfig, ResourceSpec, StartupConfig
 
 

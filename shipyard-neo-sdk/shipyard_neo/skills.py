@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, cast
-
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from shipyard_neo.types import (
     SkillCandidateInfo,

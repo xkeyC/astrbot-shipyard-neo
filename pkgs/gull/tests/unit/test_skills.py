@@ -6,7 +6,6 @@ used by the /meta endpoint to expose built-in skill metadata.
 
 from pathlib import Path
 
-import pytest
 
 from app.main import _parse_frontmatter, _scan_built_in_skills
 

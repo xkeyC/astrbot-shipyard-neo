@@ -259,6 +259,12 @@ class ProfileConfig(BaseModel):
     warmup_retry_backoff_max_ms: int = 5000  # Max backoff for warmup retry
     warmup_circuit_breaker_threshold: int = 10  # Consecutive failures before circuit break
 
+    # ========== Browser mode ==========
+    # - None: default — per-sandbox Gull container (legacy)
+    # - "shared": use global Gull Service (browser_service.enabled must be true)
+    # - "isolated": force per-sandbox Gull container
+    browser: Literal["shared", "isolated"] | None = None
+
     def model_post_init(self, __context: Any) -> None:
         """Normalize single-container format to multi-container format.
 
@@ -348,10 +354,16 @@ class ProfileConfig(BaseModel):
 class CargoConfig(BaseModel):
     """Cargo storage configuration."""
 
-    # 宿主机路径，仅用于 Bay 管理，不暴露给运行时
+    # Path inside Bay container where cargo directories are created.
     root_path: str = "/var/lib/bay/cargos"
+    # Corresponding path on the Docker host (for bind-mount Binds).
+    # Only used by the Docker driver; K8s driver uses PVCs and ignores this.
+    # When set, cargo volumes become bind-mount directories, enabling shared
+    # browser deployments (Gull accesses cargo via a shared /cargos mount).
+    # When None (the default), Docker named volumes are used instead.
+    host_root_path: str | None = None
     default_size_limit_mb: int = 1024
-    # 容器内挂载路径 (固定)
+    # Mount path inside sandbox containers (fixed).
     mount_path: str = "/workspace"
 
 
@@ -425,6 +437,17 @@ class BrowserLearningConfig(BaseModel):
     error_rate_multiplier_threshold: float = 2.0
 
 
+class BrowserServiceConfig(BaseModel):
+    """Global browser service for shared browser pool.
+
+    When enabled, Bay routes all browser capability requests to a shared
+    Gull Service instead of creating per-sandbox Gull containers.
+    """
+
+    enabled: bool = False
+    endpoint: str = "http://gull-service:8115"
+
+
 class WarmPoolConfig(BaseModel):
     """Warm pool global configuration."""
 
@@ -484,6 +507,7 @@ class Settings(BaseSettings):
     gc: GCConfig = Field(default_factory=GCConfig)
     warm_pool: WarmPoolConfig = Field(default_factory=WarmPoolConfig)
     browser_learning: BrowserLearningConfig = Field(default_factory=BrowserLearningConfig)
+    browser_service: BrowserServiceConfig = Field(default_factory=BrowserServiceConfig)
     proxy: ProxyConfig = Field(default_factory=ProxyConfig)
     browser_auto_release_enabled: bool = True
 

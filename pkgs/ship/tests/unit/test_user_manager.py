@@ -3,8 +3,7 @@ Unit tests for user_manager module (command execution).
 """
 
 import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
-from pathlib import Path
+from unittest.mock import MagicMock
 
 
 # Mark all tests in this module as unit tests

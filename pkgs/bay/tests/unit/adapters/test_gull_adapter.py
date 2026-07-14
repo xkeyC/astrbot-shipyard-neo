@@ -10,8 +10,8 @@ Note: We use httpx.MockTransport + monkeypatch to provide a shared client.
 
 from __future__ import annotations
 
-import pytest
 import httpx
+import pytest
 
 import app.adapters.gull as gull_mod
 from app.adapters.gull import GullAdapter

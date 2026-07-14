@@ -1021,7 +1021,9 @@ class SkillLifecycleService:
         return release
 
     async def _sanitize_candidate_promotion_pointer(self, candidate: SkillCandidate) -> None:
-        """Clear stale promotion release pointer on candidate if target release is deleted/missing."""
+        """Clear stale promotion release pointer on candidate.
+
+        Clears the pointer if the target release has been deleted or missing."""
         release_id = candidate.promotion_release_id
         if not release_id:
             return

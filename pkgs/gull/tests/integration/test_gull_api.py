@@ -20,7 +20,6 @@ Requires a running Gull container (managed by conftest.gull_container fixture).
 from __future__ import annotations
 
 import httpx
-import pytest
 
 from .conftest import DEFAULT_TIMEOUT, skip_unless_docker, skip_unless_gull_image
 

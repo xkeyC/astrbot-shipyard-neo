@@ -5,7 +5,6 @@ Pytest configuration and shared fixtures for Ship tests.
 import os
 import sys
 from pathlib import Path
-from typing import Generator
 
 import pytest
 

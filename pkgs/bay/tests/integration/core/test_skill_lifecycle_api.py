@@ -390,7 +390,7 @@ async def test_skill_delete_release_and_candidate_flow():
                 json={"stage": "canary"},
             )
             assert promote_b.status_code == 200
-            release_b = promote_b.json()
+            promote_b.json()
 
             # Deleted release is no longer returned by list endpoint.
             list_releases = await client.get(

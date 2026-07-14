@@ -11,6 +11,7 @@ These tests do NOT require agent-browser to be installed.
 from __future__ import annotations
 
 import asyncio
+import shlex
 from dataclasses import dataclass
 
 import pytest
@@ -21,17 +22,141 @@ import app.main as gull_main
 def test_normalize_browser_command_defaults_screenshot_to_workspace(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    monkeypatch.setattr(gull_main.time, "time", lambda: 1234.567)
+    monkeypatch.setattr(
+        gull_main.uuid,
+        "uuid4",
+        lambda: type("_UUID", (), {"hex": "abc123"})(),
+    )
 
     cmd = gull_main._normalize_browser_command("screenshot")
 
-    assert cmd == "screenshot /workspace/screenshot-1234567.png"
+    assert cmd == "screenshot /workspace/screenshot-abc123.png"
 
 
 def test_normalize_browser_command_preserves_explicit_screenshot_path():
     cmd = gull_main._normalize_browser_command("screenshot /workspace/page.png")
 
     assert cmd == "screenshot /workspace/page.png"
+
+
+@pytest.mark.parametrize(
+    ("cmd", "expected"),
+    [
+        (
+            "screenshot --full",
+            "screenshot --full /workspace/screenshot-abc123.png",
+        ),
+        (
+            "screenshot --annotate",
+            "screenshot --annotate /workspace/screenshot-abc123.png",
+        ),
+        (
+            "screenshot --full /workspace/page.png",
+            "screenshot --full /workspace/page.png",
+        ),
+        (
+            "screenshot /workspace/page.png --full",
+            "screenshot /workspace/page.png --full",
+        ),
+    ],
+)
+def test_normalize_browser_command_handles_screenshot_options(
+    monkeypatch: pytest.MonkeyPatch,
+    cmd: str,
+    expected: str,
+):
+    monkeypatch.setattr(
+        gull_main.uuid,
+        "uuid4",
+        lambda: type("_UUID", (), {"hex": "abc123"})(),
+    )
+
+    assert gull_main._normalize_browser_command(cmd) == expected
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "screenshot --screenshot-dir /workspace/shots",
+        "screenshot --screenshot-format jpeg --screenshot-quality 80",
+        "screenshot --screenshot-dir=/workspace/shots",
+    ],
+)
+def test_normalize_browser_command_does_not_mistake_option_values_for_output(
+    monkeypatch: pytest.MonkeyPatch,
+    cmd: str,
+):
+    monkeypatch.setattr(
+        gull_main.uuid,
+        "uuid4",
+        lambda: type("_UUID", (), {"hex": "abc123"})(),
+    )
+
+    normalized = gull_main._normalize_browser_command(cmd)
+
+    assert shlex.split(normalized)[-1] == "/workspace/screenshot-abc123.png"
+
+
+def test_normalize_browser_command_is_stable_after_path_injection(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    generated = iter(
+        [
+            type("_UUID", (), {"hex": "first"})(),
+            type("_UUID", (), {"hex": "second"})(),
+        ]
+    )
+    monkeypatch.setattr(gull_main.uuid, "uuid4", lambda: next(generated))
+
+    normalized = gull_main._normalize_browser_command("screenshot --annotate")
+
+    assert normalized == "screenshot --annotate /workspace/screenshot-first.png"
+    assert gull_main._normalize_browser_command(normalized) == normalized
+
+
+def test_shared_translation_defaults_screenshot_options_to_cargo(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(
+        gull_main.uuid,
+        "uuid4",
+        lambda: type("_UUID", (), {"hex": "abc123"})(),
+    )
+
+    argv, cwd, profile = gull_main._translate_and_split(
+        "screenshot --full",
+        "cargo-1",
+    )
+
+    cargo_path = "/cargos/bay-cargo-cargo-1"
+    assert argv == ["screenshot", "--full", f"{cargo_path}/screenshot-abc123.png"]
+    assert cwd == cargo_path
+    assert profile == f"{cargo_path}/.browser/profile"
+
+
+@pytest.mark.parametrize(
+    ("cmd", "expected"),
+    [
+        (
+            "screenshot --full /workspace/page.png",
+            ["screenshot", "--full", "/cargos/bay-cargo-cargo-1/page.png"],
+        ),
+        (
+            "screenshot /workspace/page.png --full",
+            ["screenshot", "/cargos/bay-cargo-cargo-1/page.png", "--full"],
+        ),
+    ],
+)
+def test_shared_translation_preserves_explicit_screenshot_path_and_options(
+    cmd: str,
+    expected: list[str],
+):
+    argv, _, _ = gull_main._translate_and_split(
+        cmd,
+        "cargo-1",
+    )
+
+    assert argv == expected
 
 
 @dataclass
@@ -126,7 +251,11 @@ async def test_run_agent_browser_defaults_screenshot_to_workspace(
         captured_argv = list(args)
         return _FakeProcess(b"", b"", 0)
 
-    monkeypatch.setattr(gull_main.time, "time", lambda: 1234.567)
+    monkeypatch.setattr(
+        gull_main.uuid,
+        "uuid4",
+        lambda: type("_UUID", (), {"hex": "abc123"})(),
+    )
     monkeypatch.setattr(
         gull_main.asyncio, "create_subprocess_exec", fake_create_subprocess_exec
     )
@@ -138,7 +267,7 @@ async def test_run_agent_browser_defaults_screenshot_to_workspace(
         timeout=10,
     )
 
-    assert captured_argv[-2:] == ["screenshot", "/workspace/screenshot-1234567.png"]
+    assert captured_argv[-2:] == ["screenshot", "/workspace/screenshot-abc123.png"]
 
 
 @pytest.mark.asyncio
@@ -378,6 +507,98 @@ async def test_exec_command_injects_profile_when_browser_ready_false(
     )
 
     assert captured["profile"] == "/workspace/.browser/profile"
+
+
+@pytest.mark.asyncio
+async def test_shared_exec_defaults_pathless_screenshot_options_to_cargo(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    import app.session as shared_session
+
+    captured: dict[str, object] = {}
+
+    async def fake_execute_browser_raw(session: str, argv: list[str], **kwargs):
+        captured.update(session=session, argv=argv, **kwargs)
+        return "", "", 0
+
+    monkeypatch.setattr(gull_main, "GULL_MODE", "shared")
+    monkeypatch.setattr(
+        gull_main.uuid,
+        "uuid4",
+        lambda: type("_UUID", (), {"hex": "abc123"})(),
+    )
+    monkeypatch.setattr(shared_session, "execute_browser_raw", fake_execute_browser_raw)
+
+    await gull_main.exec_command(
+        gull_main.ExecRequest(
+            cmd="screenshot --full",
+            sandbox_id="sandbox-1",
+            cargo_id="cargo-1",
+        )
+    )
+
+    assert captured["argv"] == [
+        "screenshot",
+        "--full",
+        "/cargos/bay-cargo-cargo-1/screenshot-abc123.png",
+    ]
+    assert captured["cwd"] == "/cargos/bay-cargo-cargo-1"
+
+
+@pytest.mark.asyncio
+async def test_shared_exec_batch_handles_pathless_and_explicit_screenshots(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    import app.session as shared_session
+
+    captured_argv: list[list[str]] = []
+
+    async def fake_execute_browser_raw(
+        _session: str,
+        argv: list[str],
+        **_kwargs,
+    ):
+        captured_argv.append(argv)
+        return "", "", 0
+
+    tick = {"value": 0.0}
+
+    def fake_perf_counter() -> float:
+        tick["value"] += 0.01
+        return tick["value"]
+
+    monkeypatch.setattr(gull_main, "GULL_MODE", "shared")
+    monkeypatch.setattr(
+        gull_main.uuid,
+        "uuid4",
+        lambda: type("_UUID", (), {"hex": "abc123"})(),
+    )
+    monkeypatch.setattr(gull_main.time, "perf_counter", fake_perf_counter)
+    monkeypatch.setattr(shared_session, "execute_browser_raw", fake_execute_browser_raw)
+
+    await gull_main.exec_batch(
+        gull_main.BatchExecRequest(
+            commands=[
+                "screenshot --annotate",
+                "screenshot /workspace/page.png --full",
+            ],
+            sandbox_id="sandbox-1",
+            cargo_id="cargo-1",
+        )
+    )
+
+    assert captured_argv == [
+        [
+            "screenshot",
+            "--annotate",
+            "/cargos/bay-cargo-cargo-1/screenshot-abc123.png",
+        ],
+        [
+            "screenshot",
+            "/cargos/bay-cargo-cargo-1/page.png",
+            "--full",
+        ],
+    ]
 
 
 @pytest.mark.asyncio

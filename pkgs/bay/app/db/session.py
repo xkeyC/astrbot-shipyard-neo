@@ -131,7 +131,10 @@ def _auto_migrate_sync(conn) -> None:
             else:
                 nullable = "NULL" if col.nullable else "NOT NULL"
 
-            ddl = f"ALTER TABLE {table.name} ADD COLUMN {col.name} {col_type} {nullable}{default_clause}"
+            ddl = (
+                f"ALTER TABLE {table.name} ADD COLUMN "
+                f"{col.name} {col_type} {nullable}{default_clause}"
+            )
             logger.info(
                 "db.auto_migrate.add_column",
                 table=table.name,
