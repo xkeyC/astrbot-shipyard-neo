@@ -62,6 +62,13 @@ services:
       dockerfile: Dockerfile
     image: shipyard-neo/ship:dev
     command: ["true"]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
 
   gull:
     profiles: ["build"]

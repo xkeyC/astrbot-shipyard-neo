@@ -10,7 +10,17 @@ Tests:
 
 from __future__ import annotations
 
-from app.config import ContainerSpec, ProfileConfig, ResourceSpec, StartupConfig
+from pathlib import Path
+
+import yaml
+
+from app.config import (
+    ContainerSpec,
+    ProfileConfig,
+    ResourceSpec,
+    Settings,
+    StartupConfig,
+)
 
 
 class TestLegacyProfileNormalization:
@@ -55,12 +65,13 @@ class TestLegacyProfileNormalization:
         config = ProfileConfig(
             id="test",
             image="ship:latest",
-            resources=ResourceSpec(cpus=2.0, memory="4g"),
+            resources=ResourceSpec(cpus=2.0, memory="4g", gpus="all"),
         )
         primary = config.get_primary_container()
         assert primary is not None
         assert primary.resources.cpus == 2.0
         assert primary.resources.memory == "4g"
+        assert primary.resources.gpus == "all"
 
     def test_legacy_profile_preserves_capabilities(self):
         """Legacy capabilities should be preserved in container spec."""
@@ -103,6 +114,35 @@ class TestLegacyProfileNormalization:
             idle_timeout=3600,
         )
         assert config.idle_timeout == 3600
+
+
+def test_shipped_docker_profiles_require_explicit_gpu_opt_in():
+    """Production defaults stay CPU-only; only python-gpu requests NVIDIA GPUs."""
+    config_path = (
+        Path(__file__).resolve().parents[5] / "deploy" / "docker" / "config.yaml"
+    )
+    settings = Settings(**yaml.safe_load(config_path.read_text(encoding="utf-8")))
+    profiles = {profile.id: profile for profile in settings.profiles}
+
+    for profile_id in ("python-default", "python-data", "browser-python"):
+        assert all(
+            container.resources.gpus is None
+            for container in profiles[profile_id].get_containers()
+        )
+
+    gpu_containers = profiles["python-gpu"].get_containers()
+    assert len(gpu_containers) == 1
+    assert gpu_containers[0].runtime_type == "ship"
+    assert gpu_containers[0].resources.gpus == "all"
+    assert profiles["python-gpu"].warm_pool_size == 0
+
+    gpu_enabled = {
+        (profile.id, container.name, container.runtime_type)
+        for profile in settings.profiles
+        for container in profile.get_containers()
+        if container.resources.gpus == "all"
+    }
+    assert gpu_enabled == {("python-gpu", "primary", "ship")}
 
 
 class TestDefaultProfileNormalization:
@@ -358,6 +398,7 @@ class TestContainerSpec:
         assert spec.health_check_path == "/health"
         assert spec.resources.cpus == 1.0
         assert spec.resources.memory == "1g"
+        assert spec.resources.gpus is None
 
     def test_custom_values(self):
         """ContainerSpec should accept custom values."""

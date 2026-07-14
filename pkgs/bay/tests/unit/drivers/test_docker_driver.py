@@ -6,9 +6,15 @@ Includes edge cases: invalid port values, missing networks, etc.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 
-from app.drivers.docker.docker import DockerDriver
+from app.config import ContainerSpec, ProfileConfig, ResourceSpec
+from app.drivers.docker.docker import DockerDriver, _gpu_device_requests
+from app.models.cargo import Cargo
+from app.models.session import Session
 
 
 class TestDockerDriverEndpointResolution:
@@ -361,3 +367,142 @@ class TestDockerDriverConnectModes:
                 endpoint = driver._endpoint_from_hostport(hp[0], hp[1])
 
         assert endpoint == "http://127.0.0.1:44444"
+
+
+class TestDockerDriverGpuRequests:
+    """GPU requests are opt-in and limited to Ship runtime containers."""
+
+    @staticmethod
+    def _driver() -> DockerDriver:
+        driver = DockerDriver.__new__(DockerDriver)
+        driver._network = None
+        driver._connect_mode = "container_network"
+        driver._host_address = "127.0.0.1"
+        driver._publish_ports = False
+        driver._host_port = None
+        driver._image_pull_policy = "if_not_present"
+        driver._log = MagicMock()
+        return driver
+
+    @staticmethod
+    def _session() -> Session:
+        return Session(
+            id="sess-gpu",
+            sandbox_id="sandbox-gpu",
+            profile_id="gpu-test",
+            runtime_type="ship",
+        )
+
+    @staticmethod
+    def _cargo() -> Cargo:
+        return Cargo(
+            id="cargo-gpu",
+            owner="default",
+            managed=True,
+            driver_ref="vol-gpu",
+        )
+
+    def test_default_has_no_device_request(self):
+        spec = ContainerSpec(name="ship", image="ship:latest", runtime_type="ship")
+
+        assert _gpu_device_requests(spec) is None
+
+    def test_all_maps_to_engine_all_gpu_request(self):
+        spec = ContainerSpec(
+            name="ship",
+            image="ship:latest",
+            runtime_type="ship",
+            resources=ResourceSpec(gpus="all"),
+        )
+
+        assert _gpu_device_requests(spec) == [
+            {
+                "Driver": "nvidia",
+                "Count": -1,
+                "Capabilities": [["gpu"]],
+            }
+        ]
+
+    @pytest.mark.asyncio
+    async def test_legacy_single_create_includes_device_request(self):
+        driver = self._driver()
+        created = SimpleNamespace(id="container-gpu")
+        client = MagicMock()
+        client.containers.create = AsyncMock(return_value=created)
+        driver._get_client = AsyncMock(return_value=client)
+        driver._ensure_image = AsyncMock()
+
+        profile = ProfileConfig(
+            id="gpu-test",
+            image="ship:latest",
+            runtime_type="ship",
+            resources=ResourceSpec(gpus="all"),
+        )
+
+        container_id = await driver.create(
+            self._session(),
+            profile,
+            self._cargo(),
+        )
+
+        assert container_id == "container-gpu"
+        config = client.containers.create.await_args.kwargs["config"]
+        assert config["HostConfig"]["DeviceRequests"] == [
+            {
+                "Driver": "nvidia",
+                "Count": -1,
+                "Capabilities": [["gpu"]],
+            }
+        ]
+
+    @pytest.mark.asyncio
+    async def test_legacy_single_create_default_has_no_device_request(self):
+        driver = self._driver()
+        client = MagicMock()
+        client.containers.create = AsyncMock(return_value=SimpleNamespace(id="container-cpu"))
+        driver._get_client = AsyncMock(return_value=client)
+        driver._ensure_image = AsyncMock()
+
+        profile = ProfileConfig(
+            id="cpu-test",
+            image="ship:latest",
+            runtime_type="ship",
+        )
+
+        await driver.create(self._session(), profile, self._cargo())
+
+        config = client.containers.create.await_args.kwargs["config"]
+        assert "DeviceRequests" not in config["HostConfig"]
+
+    def test_multi_container_only_ship_gets_device_request(self):
+        driver = self._driver()
+        session = self._session()
+        cargo = self._cargo()
+        ship = ContainerSpec(
+            name="ship",
+            image="ship:latest",
+            runtime_type="ship",
+            resources=ResourceSpec(gpus="all"),
+        )
+        gull = ContainerSpec(
+            name="gull",
+            image="gull:latest",
+            runtime_type="gull",
+            resources=ResourceSpec(gpus="all"),
+        )
+
+        ship_config, _ = driver._build_container_config(
+            ship,
+            session=session,
+            cargo=cargo,
+            network_name="bay_net_sess-gpu",
+        )
+        gull_config, _ = driver._build_container_config(
+            gull,
+            session=session,
+            cargo=cargo,
+            network_name="bay_net_sess-gpu",
+        )
+
+        assert ship_config["HostConfig"]["DeviceRequests"][0]["Count"] == -1
+        assert "DeviceRequests" not in gull_config["HostConfig"]

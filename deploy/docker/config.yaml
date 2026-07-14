@@ -118,6 +118,24 @@ profiles:
     warm_pool_size: 1
     env: {}
 
+  # ── NVIDIA GPU Python sandbox (explicit opt-in) ─────
+  - id: python-gpu
+    description: "Python sandbox with access to all NVIDIA GPUs"
+    image: "ghcr.io/astrbotdevs/shipyard-neo-ship:latest"
+    runtime_type: ship
+    runtime_port: 8123
+    resources:
+      cpus: 2.0
+      memory: "4g"
+      gpus: all
+    capabilities:
+      - filesystem
+      - shell
+      - python
+    idle_timeout: 43200
+    warm_pool_size: 0  # Do not reserve a GPU until this profile is requested
+    env: {}
+
   # ── Browser + Python (shared browser pool) ──────────
   - id: browser-python
     description: "Browser automation with Python backend (shared Chromium)"

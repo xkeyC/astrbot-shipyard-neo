@@ -64,6 +64,19 @@ def _parse_memory(memory_str: str) -> int:
     return int(memory_str)
 
 
+def _gpu_device_requests(spec: "ContainerSpec") -> list[dict[str, Any]] | None:
+    """Map an explicit Ship GPU opt-in to Docker Engine DeviceRequests."""
+    if spec.runtime_type != "ship" or spec.resources.gpus != "all":
+        return None
+    return [
+        {
+            "Driver": "nvidia",
+            "Count": -1,
+            "Capabilities": [["gpu"]],
+        }
+    ]
+
+
 class DockerDriver(Driver):
     """Docker driver implementation using aiodocker."""
 
@@ -338,6 +351,8 @@ class DockerDriver(Driver):
             "NanoCpus": nano_cpus,
             "PidsLimit": 256,
         }
+        if device_requests := _gpu_device_requests(primary):
+            host_config["DeviceRequests"] = device_requests
 
         # Port publishing (needed for host_port mode, and for auto fallback)
         expose_key = f"{runtime_port}/tcp"
@@ -811,6 +826,8 @@ class DockerDriver(Driver):
             "PidsLimit": 256,
             "NetworkMode": network_name,
         }
+        if device_requests := _gpu_device_requests(spec):
+            host_config["DeviceRequests"] = device_requests
 
         # Port publishing for Bay -> container access
         expose_key = f"{spec.runtime_port}/tcp"

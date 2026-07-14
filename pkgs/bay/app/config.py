@@ -162,6 +162,8 @@ class ResourceSpec(BaseModel):
 
     cpus: float = 1.0
     memory: str = "1g"
+    # Docker-only opt-in. None preserves CPU-only behavior.
+    gpus: Literal["all"] | None = None
 
 
 class ContainerSpec(BaseModel):

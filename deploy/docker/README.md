@@ -31,6 +31,8 @@ Bay + Ship + Gull 的 Docker Compose 自包含生产部署方案。
 
 - Docker Engine 24+ (带 Compose v2 插件)
 - 镜像已通过 CD 自动推送到 GHCR（`ghcr.io/astrbotdevs/shipyard-neo-{bay,ship,gull}`）
+- 使用 `resources.gpus: all` 的 Ship profile 还要求宿主机已安装 NVIDIA
+  驱动和 [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
 
 ## 快速开始
 
@@ -92,9 +94,10 @@ docker compose -f docker-compose.yaml -f docker-compose.with-astrbot.yaml logs -
 - **认证**: 强制要求 API Key (`allow_anonymous: false`)
   - API Key 读取优先级：`BAY_API_KEY` > `security.api_key` >（首次启动且 DB 为空时）自动生成
 - **GC**: 启用自动回收（包括 orphan container 检测），每 5 分钟一轮
-- **Profile**: 包含 3 个常用 profile：
+- **Profile**: 包含 4 个常用 profile：
   - `python-default` — 标准 Python 沙箱 (1 CPU / 1GB)
   - `python-data` — 数据科学沙箱 (2 CPU / 4GB)
+  - `python-gpu` — 显式请求全部 NVIDIA GPU，不启用 warm pool
   - `browser-python` — 浏览器自动化 + Python 多容器沙箱
 
 ### 代理配置
@@ -112,6 +115,37 @@ environment:
 ```
 
 也可以在 `config.yaml` 的 `proxy:` 段配置同样的值。配置后需要重建 Bay 容器，并新建 sandbox；已存在的 sandbox 不会自动更新环境变量。
+
+### Ship GPU
+
+Ship 运行时镜像基于 `nvidia/cuda:12.8.1-cudnn-runtime-ubuntu24.04`，包含
+CUDA/cuDNN runtime。镜像构建本身不需要 GPU，也不会在构建阶段执行
+`nvidia-smi`；NVIDIA Container Toolkit 会在 GPU 容器启动时提供驱动侧 utility，
+因此只有在具备 NVIDIA 驱动和 Container Toolkit 的宿主机上，容器内才可运行
+`nvidia-smi` 并访问实际设备。
+
+GPU 是每个 Ship 容器的显式 opt-in。生产配置中的 `python-default`、
+`python-data` 和 `browser-python` 保持 CPU-only；只有专用的 `python-gpu`
+profile 请求 GPU，且不会创建 GPU warm pool：
+
+```yaml
+resources:
+  cpus: 1.0
+  memory: "1g"
+  gpus: all
+```
+
+Bay 通过 Docker socket 动态创建 Ship，并把 `gpus: all` 映射为 Docker Engine
+`DeviceRequests`（NVIDIA driver、`Count: -1`、`gpu` capability）。因此不要给
+Compose 中的 `bay`、`gull-service` 或 AstrBot 服务添加 GPU reservation：
+reservation 只作用于那个静态 Compose 服务，不会传播给 Bay 后续创建的 sandbox。
+唯一例外是 `dev/docker-compose.yaml` 中 profile 为 `build` 的静态 `ship`
+服务；它直接代表 Ship 预制环境，因此自身带有等价的 Compose NVIDIA GPU
+reservation。该 reservation 不替代生产环境中 Bay 为动态 sandbox 设置的
+`DeviceRequests`，也不表示镜像构建阶段会执行或需要运行 `nvidia-smi`。
+未配置 `gpus` 的 profile 保持 CPU-only；Gull 不会收到 GPU request。CUDA
+基础镜像也可以在不请求 DeviceRequests 的 CPU-only Ship 中运行。宿主 NVIDIA
+驱动需满足 CUDA 12.8 的兼容要求。
 
 ### Profile API
 
