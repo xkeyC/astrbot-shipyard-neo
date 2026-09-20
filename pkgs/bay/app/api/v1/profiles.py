@@ -18,6 +18,7 @@ class ResourceSpecResponse(BaseModel):
 
     cpus: float
     memory: str
+    pids: int = 1024
 
 
 class ContainerInfoResponse(BaseModel):
@@ -65,10 +66,14 @@ def _profile_to_response(
 
     # Resources: use legacy field or primary container resources
     if p.resources is not None:
-        resources = ResourceSpecResponse(cpus=p.resources.cpus, memory=p.resources.memory)
+        resources = ResourceSpecResponse(
+            cpus=p.resources.cpus, memory=p.resources.memory, pids=p.resources.pids
+        )
     elif primary is not None:
         resources = ResourceSpecResponse(
-            cpus=primary.resources.cpus, memory=primary.resources.memory
+            cpus=primary.resources.cpus,
+            memory=primary.resources.memory,
+            pids=primary.resources.pids,
         )
     else:
         resources = ResourceSpecResponse(cpus=1.0, memory="1g")
@@ -88,7 +93,11 @@ def _profile_to_response(
                 name=c.name,
                 runtime_type=c.runtime_type,
                 capabilities=sorted(c.capabilities),
-                resources=ResourceSpecResponse(cpus=c.resources.cpus, memory=c.resources.memory),
+                resources=ResourceSpecResponse(
+                    cpus=c.resources.cpus,
+                    memory=c.resources.memory,
+                    pids=c.resources.pids,
+                ),
             )
             for c in raw_containers
         ]

@@ -212,7 +212,7 @@ class TestSingleContainerPathDoesNotUseNetworkingConfig:
                 "Binds": ["vol-test:/workspace:rw"],
                 "Memory": 1073741824,
                 "NanoCpus": 1000000000,
-                "PidsLimit": 256,
+                "PidsLimit": 1024,
             },
             "ExposedPorts": {"8123/tcp": {}},
         }

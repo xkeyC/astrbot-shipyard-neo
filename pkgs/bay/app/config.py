@@ -164,6 +164,10 @@ class ResourceSpec(BaseModel):
     memory: str = "1g"
     # Docker-only opt-in. None preserves CPU-only behavior.
     gpus: Literal["all"] | None = None
+    # Processes the container may hold. An agent shell session costs a tmux
+    # pane, a shell and the command itself, so a sandbox running many of them
+    # needs far more than the handful a single interactive session would.
+    pids: int = 1024
 
 
 class ContainerSpec(BaseModel):

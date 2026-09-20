@@ -128,6 +128,9 @@ profiles:
       cpus: 2.0
       memory: "4g"
       gpus: all
+      # Agent shell sessions cost a tmux pane, a shell and the
+      # command itself, so this profile hosts many more than a person would.
+      pids: 1024
     capabilities:
       - filesystem
       - shell

@@ -298,6 +298,7 @@ class DockerDriver(Driver):
         # Parse resource limits
         mem_limit = _parse_memory(primary.resources.memory)
         nano_cpus = int(primary.resources.cpus * 1e9)
+        pids_limit = primary.resources.pids
 
         # Build environment
         env = [f"{k}={v}" for k, v in primary.env.items()]
@@ -349,7 +350,7 @@ class DockerDriver(Driver):
             "Binds": [f"{cargo.driver_ref}:{WORKSPACE_MOUNT_PATH}:rw"],
             "Memory": mem_limit,
             "NanoCpus": nano_cpus,
-            "PidsLimit": 256,
+            "PidsLimit": pids_limit,
         }
         if device_requests := _gpu_device_requests(primary):
             host_config["DeviceRequests"] = device_requests
@@ -787,6 +788,7 @@ class DockerDriver(Driver):
         # Resource limits
         mem_limit = _parse_memory(spec.resources.memory)
         nano_cpus = int(spec.resources.cpus * 1e9)
+        pids_limit = spec.resources.pids
 
         # Environment variables
         env = [f"{k}={v}" for k, v in spec.env.items()]
@@ -823,7 +825,7 @@ class DockerDriver(Driver):
             "Binds": [f"{cargo.driver_ref}:{WORKSPACE_MOUNT_PATH}:rw"],
             "Memory": mem_limit,
             "NanoCpus": nano_cpus,
-            "PidsLimit": 256,
+            "PidsLimit": pids_limit,
             "NetworkMode": network_name,
         }
         if device_requests := _gpu_device_requests(spec):
