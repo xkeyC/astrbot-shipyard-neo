@@ -83,6 +83,7 @@ RUN export HTTP_PROXY="${HTTP_PROXY}" HTTPS_PROXY="${HTTPS_PROXY}" \
     less \
     procps \
     htop \
+    tmux \
     && rm -f /etc/apt/apt.conf.d/99proxy \
     && rm -rf /var/lib/apt/lists/*
 
