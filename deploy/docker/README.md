@@ -147,9 +147,10 @@ profiles:
 
 - 不设置的变量不生效，工具使用各自的官方源。
 - conda 建议不设镜像：官方 conda.anaconda.org 提供分片索引（repodata shards），
-  `conda install` 只下载用到的那几片，实测十几秒装完；TUNA 等镜像没有分片，
-  conda 会退回去下载完整的 conda-forge 索引（linux-64 约 450 MB），第一次安装要等十分钟
-  以上。只在官方源连不上时再设 `SHIPYARD_CONDA_MIRROR`。
+  `conda install` 只下载用到的那几片（缓存约 5 MB）。TUNA、USTC、BFSU、NJU 等国内镜像
+  都没有分片，conda 会退回去下载并解析完整的 conda-forge 索引（linux-64 约 450 MB）：
+  1 GB 内存的沙箱里 conda 直接被 OOM 杀掉，内存够时也要多占约 650 MB 磁盘。只在官方源
+  连不上、且 profile 内存在 4 GB 左右时再设 `SHIPYARD_CONDA_MIRROR`。
 - `SHIPYARD_CRATES_MIRROR` 不带协议前缀时按 sparse 索引处理（自动加 `sparse+`）；
   也可以直接写 `sparse+...` 或 `git+...`。入口脚本只改写自己生成的
   `config.toml`，agent 在沙箱里改过的文件不会被覆盖。
