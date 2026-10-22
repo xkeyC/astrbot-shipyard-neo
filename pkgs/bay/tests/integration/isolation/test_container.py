@@ -77,6 +77,27 @@ async def test_uid_nonroot():
             assert "uid=0(root)" not in output
 
 
+async def test_no_privilege_escalation():
+    """Neither the kernel nor the shell is root, and sudo cannot change that."""
+    async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=AUTH_HEADERS) as client:
+        async with create_sandbox(client) as sandbox:
+            r = await client.post(
+                f"/v1/sandboxes/{sandbox['id']}/python/exec",
+                json={"code": "import os; print(os.getuid(), os.geteuid())"},
+                timeout=120.0,
+            )
+            assert r.status_code == 200
+            assert r.json()["output"].split() == ["1000", "1000"]
+
+            r = await client.post(
+                f"/v1/sandboxes/{sandbox['id']}/shell/exec",
+                json={"command": "sudo -n true"},
+                timeout=120.0,
+            )
+            assert r.status_code == 200
+            assert r.json()["success"] is False
+
+
 # --- Working directory ---
 
 

@@ -27,13 +27,17 @@ async def sandbox_id():
     "command,expected",
     [
         ("python3 --version", "Python 3"),
-        ("node --version", "v"),
-        ("npm --version", ""),
-        ("pnpm --version", ""),
+        ("uv --version", "uv"),
+        ("conda --version", "conda"),
+        ("bun --version", ""),
+        ("node -e 'console.log(1 + 1)'", "2"),
+        ("cargo --version", "cargo"),
+        ("nix --version", "nix"),
         ("git --version", "git version"),
         ("curl --version", "curl"),
+        ("ffmpeg -version", "ffmpeg version"),
     ],
-    ids=["python", "node", "npm", "pnpm", "git", "curl"],
+    ids=["python", "uv", "conda", "bun", "node", "cargo", "nix", "git", "curl", "ffmpeg"],
 )
 async def test_tool_available(sandbox_id: str, command: str, expected: str):
     """Verify tool is available."""

@@ -60,6 +60,16 @@ services:
     build:
       context: ../pkgs/ship
       dockerfile: Dockerfile
+      # 构建期镜像源（Dockerfile 里可选，删掉这些就走官方源）
+      args:
+        PACMAN_MIRROR: "https://mirrors.tuna.tsinghua.edu.cn/archlinux"
+        PYPI_MIRROR: "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple"
+        CONDA_MIRROR: "https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud"
+        MINIFORGE_MIRROR: "https://mirrors.tuna.tsinghua.edu.cn/github-release/conda-forge/miniforge/LatestRelease"
+        RUSTUP_MIRROR: "https://mirrors.tuna.tsinghua.edu.cn/rustup"
+        PLAYWRIGHT_MIRROR: "https://registry.npmmirror.com/-/binary/playwright"
+        PYTHON_MIRROR: "https://registry.npmmirror.com/-/binary/python-build-standalone"
+        NIXPKGS_MIRROR: "https://mirrors.tuna.tsinghua.edu.cn/nix-channels/nixpkgs-unstable/nixexprs.tar.xz"
     image: shipyard-neo/ship:dev
     command: ["true"]
     deploy:

@@ -6,13 +6,22 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "aiofiles>=24.1.0",
-    "beautifulsoup4>=4.14.0",
     "fastapi[standard]>=0.117.1",
+    "jupyter-client>=8.6.3",
+    "pydantic>=2.11.9",
+    "uvicorn>=0.37.0",
+]
+
+[project.optional-dependencies]
+# Libraries preinstalled into the sandbox's conda base, where agent code and
+# the IPython kernel run. The Ship server itself only needs the dependencies
+# above and runs from its own venv, so agent installs cannot break it.
+sandbox = [
+    "beautifulsoup4>=4.14.0",
     "imageio>=2.37.0",
     "ipykernel>=6.30.1",
     "ipython>=9.5.0",
     "jinja2>=3.1.6",
-    "jupyter-client>=8.6.3",
     "lxml>=6.0.2",
     "matplotlib>=3.7.0",
     "numpy>=2.3.3",
@@ -21,7 +30,6 @@ dependencies = [
     "pandas>=2.3.2",
     "pdfplumber>=0.11.9",
     "pillow>=11.3.0",
-    "pydantic>=2.11.9",
     "pypdf>=6.6.0",
     "python-docx>=1.2.0",
     "python-pptx>=1.0.2",
@@ -35,12 +43,9 @@ dependencies = [
     "orjson>=3.10.0",
     "python-slugify>=8.0.0",
     "tomli>=2.0.0",
-    "uvicorn>=0.37.0",
     "xlrd>=2.0.2",
     "playwright>=1.56.0",
 ]
-
-[project.optional-dependencies]
 test = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",

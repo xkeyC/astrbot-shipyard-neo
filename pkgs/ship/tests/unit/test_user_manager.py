@@ -209,26 +209,37 @@ class TestProcessResult:
 class TestRuntimeEnv:
     """Test runtime environment propagation."""
 
-    def test_proxy_env_is_added_to_sudo_env_args(self, monkeypatch):
-        from app.components.user_manager import _get_sudo_env_args
+    def test_proxy_env_is_added_to_process_env(self, monkeypatch):
+        from app.components.user_manager import _get_base_process_env
 
         monkeypatch.setenv("http_proxy", "http://proxy:7890")
         monkeypatch.setenv("no_proxy", "localhost,127.0.0.1")
 
-        env_args = _get_sudo_env_args()
+        process_env = _get_base_process_env()
 
-        assert "http_proxy=http://proxy:7890" in env_args
-        assert "no_proxy=localhost,127.0.0.1" in env_args
+        assert process_env["http_proxy"] == "http://proxy:7890"
+        assert process_env["no_proxy"] == "localhost,127.0.0.1"
 
     def test_request_env_overrides_runtime_proxy_env(self, monkeypatch):
-        from app.components.user_manager import _get_sudo_env_args
+        from app.components.user_manager import _get_base_process_env
 
         monkeypatch.setenv("http_proxy", "http://proxy:7890")
 
-        env_args = _get_sudo_env_args({"http_proxy": "http://override:7890"})
+        process_env = _get_base_process_env({"http_proxy": "http://override:7890"})
 
-        assert "http_proxy=http://override:7890" in env_args
-        assert "http_proxy=http://proxy:7890" not in env_args
+        assert process_env["http_proxy"] == "http://override:7890"
+
+    def test_server_env_is_inherited(self, monkeypatch):
+        """Mirror settings the entrypoint exported reach user commands."""
+        from app.components.user_manager import WORKSPACE_ROOT, _get_base_process_env
+
+        monkeypatch.setenv("UV_DEFAULT_INDEX", "https://mirror.example/simple")
+
+        process_env = _get_base_process_env()
+
+        assert process_env["UV_DEFAULT_INDEX"] == "https://mirror.example/simple"
+        assert process_env["HOME"] == str(WORKSPACE_ROOT)
+        assert process_env["USER"] == "shipyard"
 
     def test_shell_export_cmd_keeps_request_env_override_after_source(self, monkeypatch):
         from app.components.user_manager import _get_shell_env_export_cmd

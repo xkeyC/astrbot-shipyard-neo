@@ -64,36 +64,40 @@ execute_browser(cmd="open file:///workspace/report.html")
 
 ## Ship Container Pre-installed Environment
 
-Ship container is based on Ubuntu with a conda `base` environment and rich pre-installed tools. See [references/sandbox-environment.md](references/sandbox-environment.md) for details.
+Ship runs Arch Linux as the unprivileged user `shipyard` (`HOME=/workspace`): **no root, no sudo, no pacman/apt**. Toolchains live in user-owned directories, so dependencies are installed with user-level package managers. See [references/sandbox-environment.md](references/sandbox-environment.md) for details.
 
-### Language Runtimes
+### Language Runtimes and Package Managers
 
 | Runtime | Details |
 |---------|---------|
-| **Python 3.13** | Runs from conda `base`; executed via IPython kernel; variables persist across calls within same sandbox |
-| **Conda** | `conda` is available for installing runtime or system-backed Python dependencies when needed |
-| **uv** | Available for fast Python package installation inside the conda environment |
-| **Playwright** | Python Playwright plus Chromium, Firefox, and WebKit pre-installed under `/ms-playwright` |
-| **Node.js LTS** | Includes npm, pnpm, vercel |
+| **Python 3.13** | conda `base` (Miniforge, `/opt/conda`); executed via IPython kernel; variables persist across calls within same sandbox |
+| **conda / uv** | `conda install -y <pkg>` (conda-forge) for native dependencies; `uv pip install --system <pkg>` for Python packages in conda `base` |
+| **bun** | Replaces Node.js: `bun install/add/run`, `bunx <cli>`; `node` and `npx` are shims to bun; no npm/pnpm |
+| **Rust** | rustup with `stable` (rustc, cargo, rustfmt, clippy); `cargo install` and `rustup toolchain/target` work |
+| **Nix** | Single-user Nix with flakes and a pinned `nixpkgs`: `nix profile install nixpkgs#<pkg>` for any other tool |
+| **CUDA** | CUDA toolkit (`nvcc`, `/opt/cuda`) and cuDNN; devices only in GPU profiles |
+| **Playwright** | Python Playwright plus Chromium pre-installed under `/ms-playwright` (no Firefox/WebKit) |
+
+Only `/workspace` persists. Packages installed elsewhere (conda, uv `--system`, `bun add -g`, `cargo install`, `nix profile`) last until the idle sandbox's container is reclaimed; keep install recipes in `/workspace`.
 
 ### Pre-installed Python Libraries
 
 | Category | Libraries |
 |----------|-----------|
-| Data Science | numpy, pandas, scikit-learn, matplotlib, seaborn |
+| Data Science | numpy, pandas, scipy, scikit-learn, matplotlib, seaborn |
 | Image Processing | Pillow, opencv-python-headless, imageio |
 | Document Processing | python-docx, python-pptx, openpyxl, xlrd, pypdf, pdfplumber, reportlab |
-| Web/XML | beautifulsoup4, lxml, jinja2, requests |
+| Web/XML | beautifulsoup4, lxml, jinja2, requests, httpx |
 | Browser Automation | playwright |
 | Utilities | tomli, pydantic, tenacity, cachetools, tqdm, orjson, python-slugify |
 
 ### System Tools
 
-`git`, `curl`, `wget`, `ffmpeg`, `imagemagick`, `poppler-utils`, `jq`, `rg`, `vim-tiny`, `nano`, `less`, `htop`, `procps`, `sudo`
+`gcc`/`make`/`cmake`/`ninja`/`meson`, `git`, `git-lfs`, `ssh`, `curl`, `wget`, `ffmpeg`, `imagemagick`, `poppler` (`pdftotext`, ...), `jq`, `rg`, `fd`, `sqlite3`, `tmux`, `vim`, `nano`, `less`, `htop`, `lsof`, `rsync`, `zip`/`unzip`/`7z`
 
 ### Fonts
 
-Noto CJK, Noto CJK Extra, WenQuanYi Micro Hei, WenQuanYi Zen Hei, Noto Color Emoji, Symbola, and DejaVu Sans are available. Matplotlib is initialized with a CJK/emoji fallback chain.
+Noto Sans CJK, WenQuanYi Micro Hei, WenQuanYi Zen Hei, Noto Color Emoji, Noto, and DejaVu Sans are available. Matplotlib is initialized with a CJK/emoji fallback chain.
 
 ### Environment Variables
 
@@ -153,18 +157,19 @@ execute_python(sandbox_id="xxx", code="print(df.describe())")
 
 ```python
 execute_shell(sandbox_id="xxx", command="ls -la", cwd="src")
-execute_shell(sandbox_id="xxx", command="npm install && npm run build")
+execute_shell(sandbox_id="xxx", command="bun install && bun run build")
 execute_shell(sandbox_id="xxx", command="git init && git add .")
 ```
 
 **Installing missing dependencies**:
 
 ```python
-execute_shell(sandbox_id="xxx", command="conda install -y -c conda-forge package-name")
 execute_shell(sandbox_id="xxx", command="uv pip install --system package-name")
+execute_shell(sandbox_id="xxx", command="conda install -y package-name")
+execute_shell(sandbox_id="xxx", command="nix profile install nixpkgs#package-name")
 ```
 
-Prefer `conda install -c conda-forge` for packages that need native libraries or compiled dependencies. Use `uv pip install --system` for regular Python packages in the default conda environment.
+Use `uv pip install --system` for regular Python packages in the default conda environment, `conda install` (conda-forge) for packages that need native libraries, `bun add` for JavaScript, `cargo install` for Rust binaries, and `nix profile install` for any other program. `sudo`, `pacman` and `apt` are not available.
 
 **Playwright automation inside Ship**:
 

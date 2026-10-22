@@ -46,7 +46,7 @@
 ```
 pkgs/ship/
 ├── run.py                    # Uvicorn 启动入口
-├── Dockerfile                # 基于 Ubuntu + conda base 环境构建
+├── Dockerfile                # 基于 Arch Linux 构建（conda、uv、bun、rustup、Nix、CUDA）
 ├── entrypoint.sh             # 容器入口：修复 /workspace 权限后启动应用
 ├── Makefile                  # 构建/运行/测试快捷命令
 ├── pyproject.toml            # 项目元数据与依赖
@@ -60,7 +60,7 @@ pkgs/ship/
 │       ├── ipython.py        # Jupyter 内核管理 + 代码执行
 │       ├── shell.py          # Shell 命令路由
 │       ├── term.py           # WebSocket 交互式终端 (PTY)
-│       └── user_manager.py   # 命令执行引擎（sudo shipyard、进程管理）
+│       └── user_manager.py   # 命令执行引擎（以 shipyard 身份执行、进程管理）
 ├── skills/                   # 内置 skill（构建时打包进镜像，启动时注入 workspace）
 │   └── python-sandbox/SKILL.md
 └── tests/
@@ -103,6 +103,7 @@ pkgs/ship/
 ### 3.4 IPython 组件 — [`ipython.py`](../pkgs/ship/app/components/ipython.py)
 
 - **单例内核模式**：每个 Ship 容器维护一个 `AsyncKernelManager` 实例
+- 内核跑在 conda base 的 Python（`/opt/conda/bin/python`）上：Ship 服务 venv 里的 kernelspec `python3` 指向它，所以 agent 往 conda base 装的包在内核里直接可用
 - 启动时通过 `start_kernel(cwd="/workspace")` 将内核工作目录设为沙箱根
 - 内核初始化包括 **matplotlib 中文/emoji 字体配置**（Noto CJK + WenQuanYi + Noto Color Emoji + Symbola fallback）
 - 支持文本输出和 Base64 PNG 图像输出
@@ -110,7 +111,7 @@ pkgs/ship/
 
 ### 3.5 Shell 组件 — [`shell.py`](../pkgs/ship/app/components/shell.py) + [`user_manager.py`](../pkgs/ship/app/components/user_manager.py)
 
-- 所有命令通过 `sudo -u shipyard -H bash -lc "..."` 以非 root 的 `shipyard` 用户执行
+- Ship 进程本身就以 `shipyard` 运行，命令直接以 `bash -lc "..."` 执行，继承服务的环境（含镜像源设置）
 - 支持 **前台执行**（等待完成，返回 stdout/stderr/return_code）
 - 支持 **后台执行**（立即返回 process_id，可查询/终止）
 - 后台进程注册表自动清理已完成的进程
@@ -118,7 +119,7 @@ pkgs/ship/
 ### 3.6 终端组件 — [`term.py`](../pkgs/ship/app/components/term.py)
 
 - WebSocket 端点 `/term/ws`，面向 xterm.js 前端集成
-- 每个连接创建独立 PTY（`pty.fork()` → `sudo -u shipyard bash -l`）
+- 每个连接创建独立 PTY（`pty.fork()` → `bash -l`）
 - 支持终端尺寸调整（`TIOCSWINSZ`）
 - 连接断开时自动清理 PTY 和子进程
 
@@ -138,24 +139,27 @@ Ship 采用 **三层防御** 策略来保障沙箱的安全隔离：
 
 ### 4.2 用户权限隔离（第二层）
 
-容器内采用 **双用户模型**：
+容器里没有以 root 运行的进程：
 
 ```
-root (UID 0)
-  └─ 运行 FastAPI 应用（需要管理内核、子进程）
-  └─ 通过 sudo 委派命令给 shipyard 用户
+entrypoint.sh (root，只在启动时)
+  └─ 修正 /workspace 权限、写入镜像源配置、注入 skills
+  └─ exec setpriv --reuid shipyard --regid shipyard --init-groups
+               --inh-caps=-all --bounding-set=-all --no-new-privs
 
 shipyard (UID 1000, GID 1000)
-  └─ 实际执行用户代码和 Shell 命令
+  └─ 运行 FastAPI 应用、IPython 内核、Shell 命令和终端
   └─ HOME=/workspace
-  └─ 无法修改系统文件
+  └─ 没有 sudo，没有 capability；no_new_privs 让 setuid 程序也拿不回 root
+  └─ 拥有用户态工具链目录：/opt/conda、/opt/rustup、/opt/cargo、/opt/bun、/nix
 ```
 
-关键实现（见 [`user_manager.py`](../pkgs/ship/app/components/user_manager.py:256-271)）：
+关键实现（见 [`entrypoint.sh`](../pkgs/ship/entrypoint.sh) 与 [`user_manager.py`](../pkgs/ship/app/components/user_manager.py)）：
 
-- Shell 命令执行: `sudo -u shipyard -H bash -lc "cd /workspace && <command>"`
-- 交互式终端: `sudo -u shipyard -H bash -l`（通过 PTY fork）
-- 环境变量被重置为安全默认值（`PATH`、`HOME`、`SHELL` 等）
+- Shell 命令执行: `bash -lc "export PATH=... && source .bay_env.sh && cd <cwd> && <command>"`
+- 交互式终端: `bash -l`（通过 PTY fork）
+- Ship 服务运行在 root 拥有的 `/opt/ship/venv`（uv 管理的 Python 3.13），agent 改动 conda base 不会影响它
+- 系统目录对 shipyard 只读，`pacman` 无法使用；系统级工具通过 `nix profile install` 安装
 
 ### 4.3 路径沙箱（第三层）
 
@@ -188,57 +192,59 @@ Shell 命令执行也有独立的路径校验逻辑（`cwd` 参数必须在 `/wo
 
 ## 5. 容器构建
 
-Ship 使用 Ubuntu 基础镜像构建（见 [`Dockerfile`](../pkgs/ship/Dockerfile)），默认 Python 环境为 conda `base`。
+Ship 使用 Arch Linux 基础镜像（`archlinux:base-devel`）构建（见 [`Dockerfile`](../pkgs/ship/Dockerfile)）。
 
 ### 5.1 Python 环境
 
 ```
-ubuntu:24.04
-  ├─ 安装 Miniforge 到 /opt/conda
-  ├─ conda base 固定为 Python 3.13
-  ├─ 使用 uv pip install --system 安装依赖到 conda base
-  └─ 清理 __pycache__、.pyc、.pyo 减小体积
+/opt/conda    Miniforge，conda base 固定为 Python 3.13，归 shipyard 所有
+              └─ uv pip install requirements-sandbox.txt（数据、文档、Playwright、ipykernel）
+/opt/ship     Ship 服务：uv 管理的 Python 3.13 + venv，安装 requirements.txt（FastAPI、jupyter-client）
+              └─ venv/share/jupyter/kernels/python3 → /opt/conda/bin/python
 ```
+
+`pyproject.toml` 的 `dependencies` 只含服务依赖，预装给 agent 的库在 `sandbox` extra 里；
+两份 requirements 由 `uv export` 生成。
 
 ### 5.2 最终镜像
 
 ```
-ubuntu:24.04
-  ├─ 运行时依赖:
-  │   ├─ 图像处理: libpng16-16, libjpeg62-turbo, libglib2.0-0
-  │   ├─ XML: libxml2, libxslt1.1
-  │   ├─ 字体: fontconfig, fonts-noto-cjk, fonts-noto-cjk-extra, fonts-noto-color-emoji, fonts-symbola, fonts-wqy-*
-  │   ├─ 系统: sudo, curl, wget, gnupg, git, nodejs, npm
-  │   ├─ 媒体/文档: ffmpeg, imagemagick, poppler-utils
-  │   └─ 调试: jq, ripgrep, vim-tiny, nano, less, procps, htop
+archlinux:base-devel
+  ├─ pacman（构建期，可用 PACMAN_MIRROR 指定镜像）:
+  │   ├─ 构建: base-devel, cmake, ninja, meson, pkgconf
+  │   ├─ 工具链: uv, bun, rustup, nix
+  │   ├─ CLI: git, git-lfs, openssh, curl, wget, jq, ripgrep, fd, sqlite, tmux, htop, lsof, iproute2, rsync, tree, zip/unzip/7z, vim, nano
+  │   ├─ 媒体/文档: ffmpeg, imagemagick, poppler
+  │   ├─ 字体: noto-fonts, noto-fonts-cjk, noto-fonts-emoji, wqy-microhei, wqy-zenhei, ttf-dejavu
+  │   ├─ 浏览器运行库: nss, gtk3, alsa-lib, libcups, libxss, ...
+  │   └─ GPU: cuda（/opt/cuda，含 nvcc）, cudnn；移除 opencl-nvidia，驱动库由 Container Toolkit 注入
   │
-  ├─ Miniforge /opt/conda + Python 3.13 + uv-installed Python packages
-  ├─ Playwright Chromium / Firefox / WebKit browsers under /ms-playwright
+  ├─ 用户 shipyard (UID 1000)，不在 sudoers 中
+  ├─ Miniforge /opt/conda + 预装 Python 库
+  ├─ Playwright Chromium → /ms-playwright
+  ├─ rustup stable（minimal + rustfmt + clippy）→ /opt/rustup, /opt/cargo
+  ├─ 单用户 Nix → /nix；nixpkgs 预取进 store，/etc/nix/registry.json 把 `nixpkgs` 固定到它
+  ├─ node / npx → bun 的转发脚本（/usr/local/bin）
+  ├─ Ship 服务 venv /opt/ship
+  ├─ matplotlib 字体缓存预热（$XDG_CACHE_HOME=/var/cache/shipyard）
   │
-  ├─ Node.js LTS + pnpm + vercel (全局安装)
-  │
-  ├─ 用户创建:
-  │   ├─ shipyard (UID 1000, GID 1000)
-  │   ├─ HOME=/workspace, SHELL=/bin/bash
-  │   └─ sudoers: root + shipyard NOPASSWD ALL
-  │
-  ├─ matplotlib 字体缓存预热 (构建时完成)
-  │
-  └─ ENTRYPOINT: entrypoint.sh → CMD: python run.py
+  └─ ENTRYPOINT: entrypoint.sh（root → setpriv 降权）→ CMD: /opt/ship/venv/bin/python run.py
 ```
 
 ### 5.3 入口流程
 
 [`entrypoint.sh`](../pkgs/ship/entrypoint.sh) 在容器启动时：
 
-1. 修复 `/workspace` 目录所有权为 `shipyard:shipyard`（处理卷挂载权限问题）
-2. 注入内置 skills 到 `/workspace/skills/`（per-skill overwrite，见 [§10](#10-扩展机制--built-in-skills-注入)）
-3. `exec "$@"` 执行 CMD（即 `python run.py`）
+1. 把 `SHIPYARD_*_MIRROR` 翻译成各包管理器的设置并 export（cargo 写入 `$CARGO_HOME/config.toml`），见 [`deploy/docker/README.md`](../deploy/docker/README.md#沙箱包管理镜像源)
+2. 生成 `/workspace/.bay_env.sh`，去掉旧镜像写进 `.bashrc` 的固定 PATH，建立 `~/.nix-profile` 链接
+3. 修复 `/workspace` 目录所有权为 `shipyard:shipyard`（处理卷挂载权限问题）
+4. 注入内置 skills 到 `/workspace/skills/`（per-skill overwrite，见 [§10](#10-扩展机制--built-in-skills-注入)）
+5. `exec setpriv ... -- "$@"` 以 shipyard 身份执行 CMD（`/opt/ship/venv/bin/python run.py`）
 
 ### 5.4 应用启动流程
 
 ```
-python run.py
+/opt/ship/venv/bin/python run.py   (shipyard)
   └─ uvicorn "app.main:app" host=0.0.0.0 port=8123
        └─ lifespan 启动:
             └─ 预热 Jupyter Kernel (get_or_create_kernel)
@@ -252,10 +258,11 @@ python run.py
 
 | 类别 | 工具 | 用途 |
 |------|------|------|
-| Python | 3.13 | 运行时 + IPython 内核 |
-| Node.js | LTS | 前端开发支持 |
-| pnpm | 全局 | Node 包管理 |
-| vercel | 全局 | 部署工具 |
+| Python | 3.13（conda base） | 运行时 + IPython 内核；conda / uv 安装依赖 |
+| bun | 系统包 | 代替 Node.js；`node`、`npx` 转发给 bun |
+| Rust | rustup stable | rustc、cargo、rustfmt、clippy |
+| Nix | 单用户 | `nix profile install nixpkgs#...` 安装其它系统工具 |
+| CUDA / cuDNN | 系统包 | `/opt/cuda`，含 nvcc |
 | Git | 系统包 | 版本控制 |
 | matplotlib | Python 包 | 图表绘制（含中文字体） |
 | pandas/numpy/scikit-learn | Python 包 | 数据科学 |
@@ -840,7 +847,7 @@ Shipyard 平台有两种容器运行时：**Ship**（代码执行）和 **Gull**
 | **API 风格** | 多端点（每个能力独立路由） | 单端点 CLI 透传（`POST /exec`） |
 | **执行引擎** | IPython 内核 + subprocess | agent-browser CLI |
 | **状态管理** | IPython 内核状态 + 后台进程表 | 浏览器 Session + Profile 持久化 |
-| **用户隔离** | sudo shipyard 用户 | 无（CLI 进程隔离） |
+| **用户隔离** | 整个进程降权为 shipyard（无 sudo） | 无（CLI 进程隔离） |
 
 ### 11.2 架构差异
 

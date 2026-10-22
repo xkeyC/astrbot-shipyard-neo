@@ -34,10 +34,10 @@ Key observations:
 │           Sandbox                    │
 │  ┌────────────────────────────────┐  │
 │  │       Ship Container           │  │
-│  │  Ubuntu + conda Python 3.13    │  │
-│  │  uv + Node.js LTS + pnpm       │  │
-│  │  ffmpeg, git, curl, sudo, etc. │  │
-│  │  Data science + doc libraries  │  │
+│  │  Arch Linux, user shipyard     │  │
+│  │  conda Python 3.13 + uv        │  │
+│  │  bun, Rust (rustup), Nix, CUDA │  │
+│  │  ffmpeg, git, curl, etc.       │  │
 │  └──────────┬─────────────────────┘  │
 │             │                        │
 │  ┌──────────┴─────────────────────┐  │
@@ -82,40 +82,50 @@ Key observations:
 
 ## Ship Container Environment
 
-Ship containers are based on Ubuntu and default to the conda `base` environment under `/opt/conda`.
+Ship containers run Arch Linux. Code runs as the unprivileged user `shipyard` (uid 1000, `HOME=/workspace`); there is **no root, no sudo and no system package manager** inside the sandbox. The toolchains below are owned by `shipyard`, so their package managers work without privileges.
 
-### Language Runtimes
+### Language Runtimes and Package Managers
 
-| Runtime | Details |
-|---------|---------|
-| **Python 3.13** | Conda `base` environment; IPython kernel; variables persist across `execute_python` calls |
-| **Conda** | Available as `conda`; use `conda install -y -c conda-forge ...` when dependencies need native libraries |
-| **uv** | Available as `uv`; use `uv pip install --system ...` for fast Python package installs in conda `base` |
-| **Playwright** | Python Playwright with Chromium, Firefox, and WebKit pre-installed under `/ms-playwright` |
-| **Node.js LTS** | npm, pnpm, vercel globally installed |
+| Runtime | Location | Install more with |
+|---------|----------|-------------------|
+| **Python 3.13** (conda `base`, IPython kernel; variables persist across `execute_python` calls) | `/opt/conda` | `uv pip install --system <pkg>`, `pip install <pkg>`, `conda install -y <pkg>` (conda-forge) |
+| **uv** | system | `uv venv`, `uv run`, `uv python install 3.12` for other projects / Python versions |
+| **bun** (replaces Node.js; `node` and `npx` are shims to bun, no npm/pnpm) | `/opt/bun` | `bun add <pkg>`, `bun add -g <pkg>`, `bunx <cli>` |
+| **Rust** stable via rustup (rustc, cargo, rustfmt, clippy) | `/opt/rustup`, `/opt/cargo` | `cargo install <crate>`, `rustup toolchain install <name>`, `rustup target add <triple>` |
+| **Nix** (single-user, flakes on, `nixpkgs` pinned in the registry and already in the store) | `/nix` | `nix profile install nixpkgs#<pkg>`, `nix shell nixpkgs#<pkg> -c <cmd>` |
+| **CUDA** toolkit (`nvcc`) + cuDNN | `/opt/cuda` | — (GPU devices only in GPU profiles; check `nvidia-smi`) |
+| **Playwright** (Python) with Chromium only | `/ms-playwright` | — (do not run `playwright install`) |
+
+### Persistence
+
+Only `/workspace` (the Cargo Volume) persists. Everything installed elsewhere stays only while the container lives; when an idle sandbox is reclaimed, the next call starts a fresh container from the image. Keep install recipes (`requirements.txt`, `package.json`, `Cargo.toml`, a setup script) in `/workspace`.
+
+### Package Mirrors
+
+Operators can preset mirrors for every package manager through profile env (`SHIPYARD_PYPI_MIRROR`, `SHIPYARD_CONDA_MIRROR`, `SHIPYARD_NPM_MIRROR`, `SHIPYARD_RUSTUP_MIRROR`, `SHIPYARD_CRATES_MIRROR`, `SHIPYARD_NIX_MIRROR`, `SHIPYARD_PACMAN_MIRROR`, `SHIPYARD_PYTHON_MIRROR`); Ship turns them into each tool's own setting at startup. Inside the sandbox they simply apply.
 
 ### Pre-installed Python Libraries
 
 | Category | Libraries |
 |----------|-----------|
-| Data Science | numpy, pandas, scikit-learn, matplotlib, seaborn |
+| Data Science | numpy, pandas, scipy, scikit-learn, matplotlib, seaborn |
 | Image Processing | Pillow, opencv-python-headless, imageio |
 | Document Processing | python-docx, python-pptx, openpyxl, xlrd, pypdf, pdfplumber, reportlab |
-| Web/XML | beautifulsoup4, lxml, jinja2 |
+| Web/XML | beautifulsoup4, lxml, jinja2, requests, httpx |
 | Browser Automation | playwright |
-| Utilities | pydantic, tomli, aiofiles |
+| Utilities | pydantic, tomli, tenacity, cachetools, tqdm, orjson, python-slugify |
 
 ### System Tools
 
-`git`, `curl`, `wget`, `ffmpeg`, `imagemagick`, `poppler-utils`, `jq`, `rg`, `vim-tiny`, `nano`, `less`, `htop`, `procps`, `sudo` (passwordless)
+Build: `gcc`, `make`, `cmake`, `ninja`, `meson`, `pkgconf`, autotools. CLI: `git`, `git-lfs`, `ssh`, `curl`, `wget`, `jq`, `rg`, `fd`, `sqlite3`, `tmux`, `htop`, `lsof`, `ip`, `rsync`, `tree`, `zip`/`unzip`/`7z`, `zstd`, `vim`, `nano`, `less`. Media/documents: `ffmpeg`, ImageMagick (`magick`), poppler (`pdftotext`, `pdftoppm`, ...).
 
 ### Fonts
 
-CJK fonts (Noto Sans CJK, Noto CJK Extra, WenQuanYi), emoji fonts (Noto Color Emoji, Symbola), and DejaVu Sans are pre-installed. Matplotlib font cache is pre-warmed.
+CJK fonts (Noto Sans CJK, WenQuanYi Micro Hei / Zen Hei), emoji (Noto Color Emoji), Noto and DejaVu Sans are pre-installed. Matplotlib font cache is pre-warmed.
 
 ### Playwright Artifacts
 
-Playwright runs in the Ship container. Save screenshots, downloads, traces, and generated files under `/workspace` so they are available to file tools and, in multi-container profiles, to Gull.
+Playwright runs in the Ship container. Inside `execute_python` use the async API (the kernel already runs an event loop). Save screenshots, downloads, traces, and generated files under `/workspace` so they are available to file tools and, in multi-container profiles, to Gull.
 
 ## Gull Container Environment
 

@@ -71,7 +71,7 @@ Ship 运行时提供：Filesystem CRUD、IPython 执行、Shell 执行、WebSock
 安全要点（摘要）：
 
 - 固定工作区根目录 `/workspace`，对路径做遍历防护（禁止逃逸）。
-- 容器内采用 root + shipyard 双用户模型：root 运行服务，实际执行用户代码时降权到 `shipyard`。
+- 容器内没有 root 进程：入口脚本完成初始化后，整个 Ship 服务降权为 `shipyard`（无 sudo、无 capability、no_new_privs）。
 
 ---
 

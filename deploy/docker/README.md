@@ -116,10 +116,75 @@ environment:
 
 也可以在 `config.yaml` 的 `proxy:` 段配置同样的值。配置后需要重建 Bay 容器，并新建 sandbox；已存在的 sandbox 不会自动更新环境变量。
 
+### 沙箱包管理镜像源
+
+Ship 的 agent 以非 root 用户 `shipyard` 运行，自己装依赖时用的是 conda、uv/pip、
+bun、rustup/cargo 和 Nix。它们的镜像源通过 profile 的 `env` 注入，Ship 的入口脚本
+在容器启动时把下面的变量翻译成各工具自己的设置，Python、Shell 和终端里都生效：
+
+| 变量 | 作用于 | 示例 |
+|------|--------|------|
+| `SHIPYARD_PYPI_MIRROR` | pip（`PIP_INDEX_URL`）、uv（`UV_DEFAULT_INDEX`） | `https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple` |
+| `SHIPYARD_CONDA_MIRROR` | conda channel alias（`conda-forge` → `<mirror>/conda-forge`） | `https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud` |
+| `SHIPYARD_NPM_MIRROR` | bun / npm registry | `https://registry.npmmirror.com` |
+| `SHIPYARD_RUSTUP_MIRROR` | rustup（`RUSTUP_DIST_SERVER`、`RUSTUP_UPDATE_ROOT`） | `https://mirrors.tuna.tsinghua.edu.cn/rustup` |
+| `SHIPYARD_CRATES_MIRROR` | cargo 的 crates.io 源替换（写入 `$CARGO_HOME/config.toml`） | `https://mirrors.tuna.tsinghua.edu.cn/crates.io-index/` |
+| `SHIPYARD_NIX_MIRROR` | Nix 二进制缓存 substituters（仍保留 cache.nixos.org 兜底） | `https://mirrors.tuna.tsinghua.edu.cn/nix-channels/store` |
+| `SHIPYARD_PACMAN_MIRROR` | pacman 的 `/etc/pacman.d/mirrorlist`（写 Arch 源根地址即可） | `https://mirrors.tuna.tsinghua.edu.cn/archlinux` |
+| `SHIPYARD_PYTHON_MIRROR` | `uv python install` 下载的 Python 构建 | `https://registry.npmmirror.com/-/binary/python-build-standalone` |
+
+```yaml
+profiles:
+  - id: python-default
+    env:
+      SHIPYARD_PYPI_MIRROR: "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple"
+      SHIPYARD_NPM_MIRROR: "https://registry.npmmirror.com"
+      SHIPYARD_RUSTUP_MIRROR: "https://mirrors.tuna.tsinghua.edu.cn/rustup"
+      SHIPYARD_CRATES_MIRROR: "https://mirrors.tuna.tsinghua.edu.cn/crates.io-index/"
+      SHIPYARD_NIX_MIRROR: "https://mirrors.tuna.tsinghua.edu.cn/nix-channels/store"
+      SHIPYARD_PACMAN_MIRROR: "https://mirrors.tuna.tsinghua.edu.cn/archlinux"
+```
+
+- 不设置的变量不生效，工具使用各自的官方源。
+- conda 建议不设镜像：官方 conda.anaconda.org 提供分片索引（repodata shards），
+  `conda install` 只下载用到的那几片，实测十几秒装完；TUNA 等镜像没有分片，
+  conda 会退回去下载完整的 conda-forge 索引（linux-64 约 450 MB），第一次安装要等十分钟
+  以上。只在官方源连不上时再设 `SHIPYARD_CONDA_MIRROR`。
+- `SHIPYARD_CRATES_MIRROR` 不带协议前缀时按 sparse 索引处理（自动加 `sparse+`）；
+  也可以直接写 `sparse+...` 或 `git+...`。入口脚本只改写自己生成的
+  `config.toml`，agent 在沙箱里改过的文件不会被覆盖。
+- `SHIPYARD_NIX_MIRROR`、`SHIPYARD_PACMAN_MIRROR` 可以写多个，用空格分隔；pacman 的地址
+  也可以写完整形式（含 `$repo/os/$arch`）。
+- agent 没有 root，不能用 pacman 安装软件包（只能 `pacman -Ss`/`-Si` 查询镜像里自带的
+  包数据库）；pacman 镜像用于 `docker exec -u root` 之类的运维操作。agent 需要系统工具时
+  用 `nix profile install`，它走 `SHIPYARD_NIX_MIRROR`。
+- `nixpkgs` 源码在构建镜像时已预取并固定，求值不需要下载；运行期 Nix 只从 substituters
+  下载二进制。
+- 工具自己的变量（`PIP_INDEX_URL`、`UV_DEFAULT_INDEX`、`NPM_CONFIG_REGISTRY`、
+  `RUSTUP_DIST_SERVER`、`NIX_CONFIG`、`HF_ENDPOINT` 等）直接写进 `env` 同样有效。
+- 和代理一样，修改后需要新建 sandbox 才会生效。
+
+构建镜像时的下载源用 build args 指定，和运行期无关，全部可选，不传就走官方源：
+
+| build arg | 作用 | 示例 |
+|-----------|------|------|
+| `BASE_IMAGE` | 基础镜像（默认 `archlinux:base-devel`） | `docker.m.daocloud.io/library/archlinux:base-devel` |
+| `PACMAN_MIRROR` | Arch 源根地址，同时写进镜像的 mirrorlist | `https://mirrors.tuna.tsinghua.edu.cn/archlinux` |
+| `PYPI_MIRROR` | PyPI | `https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple` |
+| `CONDA_MIRROR` | conda channel alias | `https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud` |
+| `MINIFORGE_MIRROR` | Miniforge 安装脚本目录 | `https://mirrors.tuna.tsinghua.edu.cn/github-release/conda-forge/miniforge/LatestRelease` |
+| `RUSTUP_MIRROR` | rustup 分发服务器 | `https://mirrors.tuna.tsinghua.edu.cn/rustup` |
+| `PLAYWRIGHT_MIRROR` | Playwright 浏览器 | `https://registry.npmmirror.com/-/binary/playwright` |
+| `PYTHON_MIRROR` | uv 下载 Ship 服务用的 Python | `https://registry.npmmirror.com/-/binary/python-build-standalone` |
+| `NIXPKGS_MIRROR` | 预取的 nixpkgs 源码 tarball（默认 GitHub 的 nixpkgs-unstable） | `https://mirrors.tuna.tsinghua.edu.cn/nix-channels/nixpkgs-unstable/nixexprs.tar.xz` |
+
+`pkgs/ship/Makefile` 的 `make build` 和 `dev/docker-compose.yaml` 的 ship 构建默认带上上面这组
+国内镜像；`make build MIRROR_ARGS=` 则全部走官方源。
+
 ### Ship GPU
 
-Ship 运行时镜像基于 `nvidia/cuda:12.8.1-cudnn-runtime-ubuntu24.04`，包含
-CUDA/cuDNN runtime。镜像构建本身不需要 GPU，也不会在构建阶段执行
+Ship 运行时镜像基于 Arch Linux，预装 Arch 的 `cuda`（完整 CUDA toolkit，含
+`nvcc`，位于 `/opt/cuda`）和 `cudnn`。镜像构建本身不需要 GPU，也不会在构建阶段执行
 `nvidia-smi`；NVIDIA Container Toolkit 会在 GPU 容器启动时提供驱动侧 utility，
 因此只有在具备 NVIDIA 驱动和 Container Toolkit 的宿主机上，容器内才可运行
 `nvidia-smi` 并访问实际设备。
@@ -145,7 +210,8 @@ reservation。该 reservation 不替代生产环境中 Bay 为动态 sandbox 设
 `DeviceRequests`，也不表示镜像构建阶段会执行或需要运行 `nvidia-smi`。
 未配置 `gpus` 的 profile 保持 CPU-only；Gull 不会收到 GPU request。CUDA
 基础镜像也可以在不请求 DeviceRequests 的 CPU-only Ship 中运行。宿主 NVIDIA
-驱动需满足 CUDA 12.8 的兼容要求。
+驱动需满足镜像中 CUDA 版本（Arch 当前为 CUDA 13.x，需要 580 及以上驱动）的
+兼容要求；镜像不带驱动库，`libcuda` 与 `nvidia-smi` 均由 Container Toolkit 从宿主注入。
 
 ### Profile API
 

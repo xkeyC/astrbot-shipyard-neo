@@ -1,8 +1,9 @@
 """
 Runtime execution utilities for fixed-user shell operations.
 
-This module provides utilities for running commands as the fixed 'shipyard' user,
-with background process management and interactive shell support.
+The entrypoint drops the whole Ship process to the unprivileged 'shipyard' user
+before starting it, so commands simply run as the current process user. This
+module adds background process management and interactive shell support.
 """
 
 import asyncio
@@ -21,10 +22,13 @@ logger = logging.getLogger(__name__)
 # 固定的执行用户和 workspace
 EXEC_USER = "shipyard"
 WORKSPACE_ROOT = Path("/workspace")
-SANDBOX_PATH = (
-    "/opt/conda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+# The image's PATH (nix profile, cargo, bun, conda, system, CUDA). It is exported
+# again after the login shell's startup files, so a workspace .bashrc cannot
+# hide the toolchains.
+SANDBOX_PATH = os.environ.get(
+    "PATH", "/opt/conda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 )
-PLAYWRIGHT_BROWSERS_PATH = "/ms-playwright"
+PLAYWRIGHT_BROWSERS_PATH = os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "/ms-playwright")
 PROXY_ENV_KEYS = (
     "HTTP_PROXY",
     "HTTPS_PROXY",
@@ -178,34 +182,23 @@ def _get_runtime_env_overrides() -> Dict[str, str]:
 
 
 def _get_base_process_env(env: Optional[Dict[str, str]] = None) -> Dict[str, str]:
-    process_env = {
-        "HOME": str(WORKSPACE_ROOT),
-        "USER": EXEC_USER,
-        "LOGNAME": EXEC_USER,
-        "PATH": SANDBOX_PATH,
-        "PLAYWRIGHT_BROWSERS_PATH": PLAYWRIGHT_BROWSERS_PATH,
-        "SHELL": "/bin/bash",
-    }
+    # Start from the server's own environment: it is the container env plus the
+    # package mirrors the entrypoint resolved.
+    process_env = dict(os.environ)
+    process_env.update(
+        {
+            "HOME": str(WORKSPACE_ROOT),
+            "USER": EXEC_USER,
+            "LOGNAME": EXEC_USER,
+            "PATH": SANDBOX_PATH,
+            "PLAYWRIGHT_BROWSERS_PATH": PLAYWRIGHT_BROWSERS_PATH,
+            "SHELL": "/bin/bash",
+        }
+    )
     process_env.update(_get_runtime_env_overrides())
     if env:
         process_env.update(env)
     return process_env
-
-
-def _get_sudo_env_vars(env: Optional[Dict[str, str]] = None) -> Dict[str, str]:
-    sudo_env = {
-        "PATH": SANDBOX_PATH,
-        "PLAYWRIGHT_BROWSERS_PATH": PLAYWRIGHT_BROWSERS_PATH,
-    }
-    sudo_env.update(_get_runtime_env_overrides())
-    if env:
-        sudo_env.update(env)
-    return sudo_env
-
-
-def _get_sudo_env_args(env: Optional[Dict[str, str]] = None) -> List[str]:
-    sudo_env = _get_sudo_env_vars(env)
-    return [f"{key}={value}" for key, value in sudo_env.items()]
 
 
 def _get_shell_env_export_cmd(env: Optional[Dict[str, str]] = None) -> str:
@@ -253,24 +246,14 @@ async def start_interactive_shell(
                 source_cmd = _get_env_file_source()
                 env_export_cmd = _get_shell_env_export_cmd(env)
 
-                env_args = _get_sudo_env_args(env)
-
-                # 准备 sudo 命令参数
-                sudo_cmd = "/usr/bin/sudo"
-                sudo_args = [
-                    sudo_cmd,
-                    "-u",
-                    EXEC_USER,
-                    "-H",
-                    "env",
-                    *env_args,
-                    "bash",
+                shell_args = [
+                    "/bin/bash",
                     "-l",
                     "-c",
                     f"{source_cmd}{env_export_cmd}exec bash -l",
                 ]
 
-                os.execvpe(sudo_cmd, sudo_args, process_env)
+                os.execve(shell_args[0], shell_args, process_env)
 
             except Exception as e:
                 print(f"Error starting shell: {e}")
@@ -318,55 +301,36 @@ async def run_command(
                     detail=f"Access denied: path must be within workspace: {WORKSPACE_ROOT}",
                 )
 
-        env_args = _get_sudo_env_args(env)
-
         # 获取环境变量注入 source 语句
         source_cmd = _get_env_file_source()
         env_export_cmd = _get_shell_env_export_cmd(env)
 
         if shell:
-            sudo_args = [
-                "sudo",
-                "-u",
-                EXEC_USER,
-                "-H",
+            exec_args = [
+                "bash",
+                "-lc",
+                f"{source_cmd}{env_export_cmd}cd {shlex.quote(str(working_dir))} && {command}",
             ]
-            sudo_args.extend(["env", *env_args])
-            sudo_args.extend(
-                [
-                    "bash",
-                    "-lc",
-                    f"{source_cmd}{env_export_cmd}cd {shlex.quote(str(working_dir))} && {command}",
-                ]
-            )
             logger.debug(
                 "Shell exec args: %s env_keys=%s",
-                sudo_args,
+                exec_args,
                 list(env.keys()) if env else [],
             )
             process = await asyncio.create_subprocess_exec(
-                *sudo_args,
+                *exec_args,
                 env=process_env,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
         else:
-            args = shlex.split(command)
-            sudo_args = [
-                "sudo",
-                "-u",
-                EXEC_USER,
-                "-H",
-            ]
-            sudo_args.extend(["env", *env_args])
-            sudo_args.extend(args)
+            exec_args = shlex.split(command)
             logger.debug(
                 "Exec args: %s env_keys=%s",
-                sudo_args,
+                exec_args,
                 list(env.keys()) if env else [],
             )
             process = await asyncio.create_subprocess_exec(
-                *sudo_args,
+                *exec_args,
                 env=process_env,
                 cwd=str(working_dir),
                 stdout=asyncio.subprocess.PIPE,

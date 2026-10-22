@@ -20,9 +20,20 @@ clean:
 	-docker image rm soulter/shipyard-ship:test 2>/dev/null || true
 	-docker system prune -f
 
+# 构建期镜像源（Dockerfile 里全部可选，不传就走官方源）。`make build MIRROR_ARGS=` 用官方源。
+MIRROR_ARGS ?= \
+	--build-arg PACMAN_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/archlinux \
+	--build-arg PYPI_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple \
+	--build-arg CONDA_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud \
+	--build-arg MINIFORGE_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/github-release/conda-forge/miniforge/LatestRelease \
+	--build-arg RUSTUP_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/rustup \
+	--build-arg PLAYWRIGHT_MIRROR=https://registry.npmmirror.com/-/binary/playwright \
+	--build-arg PYTHON_MIRROR=https://registry.npmmirror.com/-/binary/python-build-standalone \
+	--build-arg NIXPKGS_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/nix-channels/nixpkgs-unstable/nixexprs.tar.xz
+
 # 构建Docker镜像
 build:
-	docker build -t soulter/shipyard-ship:latest .
+	docker build $(MIRROR_ARGS) -t soulter/shipyard-ship:latest .
 
 # 运行Ship容器
 run: build

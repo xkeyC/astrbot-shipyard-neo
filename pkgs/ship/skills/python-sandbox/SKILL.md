@@ -1,139 +1,117 @@
 ---
 name: python-sandbox
-description: "Ship runtime usage guide for code execution sandboxes. Covers Python execution via IPython kernel with persistent variables, Shell command execution, filesystem operations with security constraints, and common development workflows. Use this when working inside a Ship container to understand available tools, pre-installed libraries, path security rules, and best practices for file I/O, data processing, and project scaffolding."
+description: "Ship sandbox guide: what is installed (Arch Linux, conda Python 3.13 with data/document libraries, uv, bun in place of Node.js, rustup with stable Rust, Nix, CUDA + cuDNN, Playwright browsers, ffmpeg, ImageMagick) and how to add packages without root (uv/pip, conda, bun, cargo, nix profile). Also covers running Python and long jobs from the shell, /workspace file rules and what survives a sandbox restart. Read it before installing anything or when a tool seems missing."
 ---
 
-# Ship Runtime: Python & Shell Sandbox
+# Ship Sandbox: Shell & Toolchains
 
-Ship is a containerized execution environment providing three core capabilities: **Python** (via IPython kernel), **Shell**, and **Filesystem** operations. All operations are confined to the `/workspace` directory.
+Ship is the sandbox's code-execution container. You work in it through **shell commands** and **file operations**, rooted at `/workspace`; Python, JavaScript, Rust and everything else run from the shell.
 
-## Container Base Image
+## The Basics
 
-- **Base**: Ubuntu with conda `base` as the default Python environment
-- **Runtime user**: `shipyard` (uid 1000, passwordless sudo)
-- **Workspace**: `/workspace` (mounted as shared Cargo Volume)
+- **OS**: Arch Linux (rolling).
+- **User**: `shipyard` (uid 1000), `HOME=/workspace`. **There is no root and no sudo**, so `pacman`, `apt`, `sudo` and writes outside the user-owned directories fail. Install what you need with the user-level package managers below.
+- **Workspace**: `/workspace` is the persistent volume (default limit about 1 GB). It survives sandbox restarts; everything else does not (see [What Persists](#what-persists)).
+- **Package mirrors** may be preconfigured by the operator through environment variables (`PIP_INDEX_URL`, `UV_DEFAULT_INDEX`, `CONDA_CHANNEL_ALIAS`, `NPM_CONFIG_REGISTRY`, `RUSTUP_DIST_SERVER`, `NIX_CONFIG`, `$CARGO_HOME/config.toml`). They apply automatically: do not override them.
 
-## Architecture
+## What Is Installed
 
-```
-┌────────────────────────────────────┐
-│         Ship Container             │
-│                                    │
-│  ┌──────────┐  ┌───────────────┐   │
-│  │  IPython  │  │  Shell/Bash   │   │
-│  │  Kernel   │  │  Executor     │   │
-│  └─────┬─────┘  └──────┬───────┘   │
-│        └───────┬────────┘           │
-│         ┌──────┴──────┐            │
-│         │  Filesystem  │            │
-│         │  /workspace  │            │
-│         └─────────────┘            │
-└────────────────────────────────────┘
-```
+| Area | What | Where |
+|------|------|-------|
+| Python | Python 3.13 in conda `base` (Miniforge, conda-forge), the default `python`/`python3`; `pip`, `conda`, `mamba` | `/opt/conda` (owned by you) |
+| Python packaging | `uv` | system |
+| JavaScript / TypeScript | `bun`; `node` and `npx` are shims that run bun (`npx` = `bun x`, `node --version` reports the Node.js version bun emulates). No npm/pnpm/yarn | system; global packages in `/opt/bun` |
+| Rust | rustup with the `stable` toolchain (rustc, cargo, rustfmt, clippy) | `/opt/rustup`, `/opt/cargo` (owned by you) |
+| Nix | single-user Nix with flakes; registry `nixpkgs` is pinned and already in the store | `/nix` (owned by you) |
+| GPU | CUDA toolkit with `nvcc`, cuDNN. A GPU is only visible in GPU profiles: check with `nvidia-smi` | `/opt/cuda` |
+| Browsers | Python Playwright with Chromium (Firefox and WebKit are not installed) | `/ms-playwright` |
+| C/C++ builds | gcc, make, cmake, ninja, meson, pkgconf, autotools | system |
+| Media & documents | ffmpeg, ImageMagick (`magick`), poppler (`pdftotext`, `pdftoppm`, ...) | system |
+| CLI | git, git-lfs, ssh, curl, wget, jq, ripgrep (`rg`), fd, sqlite3, tmux, htop, lsof, ip, rsync, tree, zip/unzip/7z, zstd, vim, nano, less | system |
+| Fonts | Noto Sans CJK (SC also as a standalone font that matplotlib can use), WenQuanYi Micro Hei / Zen Hei, Noto Color Emoji, Noto Sans, DejaVu | system |
 
-## Capability 1: Python Execution
-
-Python code runs inside an **IPython kernel**. Variables, imports, and state persist across calls within the same sandbox session.
-
-### Key Behaviors
-
-- **Persistent state**: Variables defined in one execution are available in subsequent ones
-- **Working directory**: `/workspace` (all relative paths resolve here)
-- **Output**: stdout/stderr are captured and returned; the last expression value is also captured
-- **Timeout**: Default 30s, max 300s
-
-### Common Patterns
-
-**Data processing pipeline**:
-
-```python
-# Call 1: Load data
-import pandas as pd
-df = pd.read_csv("data.csv")
-print(f"Loaded {len(df)} rows")
-
-# Call 2: Process (df persists from call 1)
-summary = df.describe()
-summary.to_csv("summary.csv")
-print("Summary saved")
-```
-
-**Visualization**:
-
-```python
-import matplotlib.pyplot as plt
-import matplotlib
-matplotlib.use("Agg")  # Non-interactive backend
-
-fig, ax = plt.subplots(figsize=(10, 6))
-ax.plot(df["date"], df["value"])
-ax.set_title("Trend")
-fig.savefig("chart.png", dpi=150, bbox_inches="tight")
-plt.close(fig)
-print("Chart saved to chart.png")
-```
-
-**Install additional packages** (when pre-installed ones are insufficient):
-
-```python
-import subprocess
-subprocess.run(["uv", "pip", "install", "--system", "package-name"], check=True)
-```
-
-### Pre-installed Python Libraries
+### Pre-installed Python Libraries (conda `base`)
 
 | Category | Libraries |
 |----------|-----------|
-| Data Science | numpy, pandas, scikit-learn, scipy, matplotlib, seaborn |
-| Image Processing | Pillow, opencv-python-headless, imageio |
-| Document Processing | python-docx, python-pptx, openpyxl, xlrd, xlsxwriter, pypdf, pdfplumber, reportlab |
-| Web/HTTP | beautifulsoup4, lxml, jinja2, httpx, requests |
-| Browser Automation | playwright with Chromium, Firefox, and WebKit browsers pre-installed |
-| Utilities | pydantic, tomli, aiofiles, tenacity, cachetools, tqdm, orjson, python-slugify |
-| IPython/Jupyter | ipython, ipykernel, jupyter-client |
-| Monitoring | sentry-sdk |
+| Data science | numpy, pandas, scipy, scikit-learn, matplotlib, seaborn |
+| Images | Pillow, opencv-python-headless, imageio |
+| Documents | python-docx, python-pptx, openpyxl, xlrd, pypdf, pdfplumber, reportlab |
+| Web / HTTP | requests, httpx, beautifulsoup4, lxml, jinja2 |
+| Browser automation | playwright |
+| Utilities | pydantic, tenacity, cachetools, tqdm, orjson, python-slugify, tomli, ipython |
 
-> **Tip**: Additional packages can be installed at runtime with `conda install -y -c conda-forge ...` or `uv pip install --system ...`. Prefer conda for packages that need native libraries or compiled dependencies. Installed packages do not persist across container restarts unless you save an environment file or requirements file to `/workspace` and re-install.
+## Installing More
 
-### Language Runtimes
+Pick the package manager by what you need:
 
-| Runtime | Version | Details |
-|---------|---------|---------|
-| Python | 3.13 | IPython kernel; variables persist across calls |
-| Conda | latest | Default `base` environment under `/opt/conda` |
-| uv | latest image copy | Fast Python package installation into conda `base` |
-| Playwright | 1.x | Python package plus pre-installed Chromium, Firefox, and WebKit under `/ms-playwright` |
-| Node.js | LTS | npm, pnpm, vercel globally installed |
+| Need | Command |
+|------|---------|
+| A Python library for `python` | `uv pip install --system <pkg>` (or `pip install <pkg>`) |
+| A library with native parts, or a non-Python tool from conda-forge | `conda install -y <pkg>` |
+| An isolated Python project, or another Python version | `uv init` / `uv venv` / `uv run`, `uv python install 3.12` |
+| JavaScript / TypeScript dependencies | `bun install`, `bun add <pkg>`, `bun run <script>`, `bun file.ts` |
+| A one-off JS CLI | `bunx <cli>` (same as `npx <cli>`) |
+| A global JS CLI | `bun add -g <pkg>` (binaries land in `/opt/bun/bin`, already on `PATH`) |
+| A Rust crate's binary | `cargo install <crate>` (lands in `/opt/cargo/bin`, on `PATH`) |
+| Another Rust toolchain or target | `rustup toolchain install nightly`, `rustup target add <triple>` |
+| Any other program or system tool | `nix profile install nixpkgs#<pkg>` (on `PATH` immediately) |
+| A tool for one command only | `nix shell nixpkgs#<pkg> -c <command>` |
 
-### System-level Packages
+Notes:
 
-| Category | Packages |
+- Prefer `uv pip install --system` for Python packages: it is the fastest. The first `conda install` in a fresh container downloads the conda-forge index, which can take a while.
+- Find a Nix package name with `nix search nixpkgs <term>` (slow: it evaluates nixpkgs) or guess the common name. Unfree packages need `NIXPKGS_ALLOW_UNFREE=1 nix profile install --impure nixpkgs#<pkg>`. List / remove with `nix profile list` / `nix profile remove <name>`, and reclaim space with `nix-collect-garbage -d`.
+- Use `nix profile`, not `nix-env`: the profile is managed by `nix profile`.
+- To compile C/C++ against a library you do not have, get it from Nix together with its compiler and pkg-config, e.g. `nix shell nixpkgs#gcc nixpkgs#pkg-config nixpkgs#openssl -c make`, or use the conda-forge build of the library.
+- PyTorch and most CUDA wheels bundle their own CUDA runtime; `/opt/cuda` is for `nvcc` and for software that looks for a system CUDA (`CUDA_HOME=/opt/cuda`).
+- Package caches live in `/var/cache/shipyard`, outside the workspace quota.
+
+## What Persists
+
+| Location | Survives |
 |----------|----------|
-| Version Control | git |
-| HTTP/Network | curl, wget |
-| Text Editors | vim-tiny, nano, less |
-| Process Management | procps, htop |
-| Media/Documents | ffmpeg, imagemagick, poppler-utils |
-| Data/Diagnostics | jq, ripgrep (`rg`) |
-| Permissions | sudo (passwordless for shipyard user) |
-| Image/Font Libs | libpng16-16, libjpeg62-turbo, fontconfig |
-| CJK Fonts | fonts-noto-cjk, fonts-noto-cjk-extra, WenQuanYi Micro Hei, WenQuanYi Zen Hei |
-| Emoji/Symbol | fonts-noto-color-emoji, fonts-symbola |
-| XML Libs | libxml2, libxslt1.1 |
+| `/workspace` (files, git repos, venvs you create there, `node_modules`, `target/`) | Everything, until the sandbox is deleted |
+| conda `base` changes, `uv pip install --system`, `bun add -g`, `cargo install`, `rustup` changes, `nix profile install` | Only while the container lives. When an idle sandbox is reclaimed, the next command gets a fresh container from the image |
 
-### CJK Font Support
+So for anything you will need again, keep the recipe in `/workspace` (a `requirements.txt`, `package.json`, `Cargo.toml`, or a `setup.sh` with the install commands) and re-run it when a tool is missing. Large dependency trees inside `/workspace` (a venv, `node_modules`, `target/`) persist but count against the workspace limit.
 
-Noto Sans CJK, WenQuanYi, Noto Color Emoji, and Symbola fonts are pre-installed. Matplotlib font cache is pre-warmed. For CJK text in plots:
+## Running Code
+
+Commands run in `bash` as `shipyard`, in `/workspace` unless a working directory (relative to `/workspace`) is given. Shell operators (`&&`, `|`, `;`, `>`) work as usual. Each command starts fresh processes: nothing in memory carries over between commands, so keep intermediate results in files.
+
+### Python
+
+Write a script and run it, or pass short code through a heredoc:
+
+```bash
+python analyze.py
+
+python - <<'PY'
+import pandas as pd
+df = pd.read_csv("data.csv")
+df.describe().to_csv("summary.csv")
+print(len(df))
+PY
+```
+
+**Plots with CJK text** (fonts and the matplotlib cache are ready; save figures to files):
 
 ```python
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 plt.rcParams["font.sans-serif"] = ["Noto Sans CJK SC", "WenQuanYi Micro Hei", "DejaVu Sans"]
 plt.rcParams["axes.unicode_minus"] = False
+fig, ax = plt.subplots(figsize=(10, 6))
+ax.plot([1, 2, 3], [3, 1, 2])
+ax.set_title("趋势")
+fig.savefig("chart.png", dpi=150, bbox_inches="tight")
 ```
 
-### Playwright Browser Automation
+### Playwright
 
-Playwright is pre-installed in the Python environment, and Chromium, Firefox, and WebKit are downloaded into `/ms-playwright` during image build. You do not need to run `playwright install` at task time.
+Chromium is already downloaded into `/ms-playwright`; do not run `playwright install`. There is no display, so launch it headless (the default).
 
 ```python
 from playwright.sync_api import sync_playwright
@@ -146,179 +124,56 @@ with sync_playwright() as p:
     browser.close()
 ```
 
-Save screenshots, downloads, traces, and generated HTML under `/workspace`. In a `browser-python` multi-container sandbox, files written by Playwright in Ship are visible to Gull and vice versa because both containers share the Cargo Volume.
+Save screenshots, downloads and traces under `/workspace`. In a `browser-python` sandbox the Gull container shares `/workspace` with Ship.
 
-## Capability 2: Shell Execution
-
-Shell commands run as the `shipyard` user with passwordless `sudo` available.
-
-### Key Behaviors
-
-- **Shell**: `/bin/bash`
-- **User**: `shipyard` (uid 1000) with `sudo NOPASSWD: ALL`
-- **Working directory**: Configurable per request, relative to `/workspace`
-- **Chaining**: Shell operators (`&&`, `|`, `;`, `>`) work as expected
-
-### Common Patterns
-
-**Project scaffolding**:
+### Other Languages and Tools
 
 ```bash
-mkdir -p src tests docs
-echo '# My Project' > README.md
-git init && git add .
+# Project scaffolding
+mkdir -p src tests && git init
+
+# JavaScript / TypeScript with bun
+bun init -y && bun add express && bun run index.ts
+
+# Rust
+cargo new hello && cd hello && cargo run --release
+
+# A tool that is not installed
+nix profile install nixpkgs#hyperfine && hyperfine 'sleep 0.1'
+
+# Media
+ffmpeg -i input.mp4 -vf scale=640:-2 output.mp4
 ```
 
-**Node.js development** (Node LTS + npm + pnpm + vercel are pre-installed):
+### Long-running Jobs
+
+Start servers, builds, training runs and other long jobs in the background with their output in a log file, then check the log in later commands:
 
 ```bash
-npm init -y && npm install express
-# or
-pnpm init && pnpm add express
+nohup python train.py > train.log 2>&1 &
+tail -n 20 train.log
 ```
 
-**System operations**:
+## File Operations
 
-```bash
-# Check running processes
-ps aux
+Direct file read/write/list/delete without the shell.
 
-# Disk usage
-du -sh /workspace/*
-
-# Install system packages (sudo available)
-sudo apt-get update && sudo apt-get install -y <package>
-```
-
-**Long-running/background tasks**:
-
-```bash
-# Run a process in background
-python server.py &
-echo $!  # Print PID for later management
-```
-
-### System Tools Available
-
-`git`, `curl`, `wget`, `ffmpeg`, `imagemagick`, `poppler-utils`, `jq`, `rg`, `vim-tiny`, `nano`, `less`, `htop`, `procps`, `sudo`, `conda`, `uv`
-
-## Capability 3: Filesystem Operations
-
-Direct file read/write/list/delete operations without shell.
-
-### Key Behaviors
-
-- All paths are **relative to `/workspace`** (or absolute under `/workspace`)
-- Path traversal outside `/workspace` is blocked with HTTP 403
-- Parent directories are created automatically on write
-
-### Security Constraint
-
-**All file paths must resolve to within `/workspace`**. The following patterns are rejected:
-
-- `../etc/passwd` → **blocked** (traverses outside workspace)
-- `/etc/passwd` → **blocked** (absolute path outside workspace)
-- `subdir/../../etc/passwd` → **blocked** (resolved path escapes workspace)
-
-Safe patterns:
-
-- `src/main.py` → `/workspace/src/main.py` ✅
-- `./output/data.csv` → `/workspace/output/data.csv` ✅
-- `/workspace/src/main.py` → `/workspace/src/main.py` ✅
-
-## Common Workflows
-
-### 1. Write → Execute → Save Results
-
-```
-write_file("script.py", code)  →  execute_python(code)  →  download("result.csv")
-```
-
-### 2. Data Processing Pipeline
-
-```
-upload("raw_data.csv")
-  → execute_python: load + clean + analyze
-  → execute_python: generate visualization
-  → download("chart.png")
-```
-
-### 3. Cross-Container Collaboration (Multi-Container Profiles)
-
-When running in a multi-container sandbox (e.g., `browser-python` profile), Ship shares `/workspace` with the Gull (browser) container:
-
-```
-Gull: screenshot /workspace/page.png    → writes to shared volume
-Ship: Image.open("page.png")           → reads from shared volume
-Ship: open("report.html", "w").write() → writes to shared volume
-Gull: open file:///workspace/report.html → reads from shared volume
-```
-
-### 4. Project Build & Deploy
-
-```bash
-# Clone, install, build, and serve
-git clone https://github.com/user/project.git
-cd project && npm install && npm run build
-# Output is in /workspace/project/dist/
-```
+- Paths are **relative to `/workspace`** (or absolute under `/workspace`); parent directories are created on write.
+- Anything resolving outside `/workspace` is rejected with HTTP 403: `../etc/passwd`, `/etc/passwd` and `subdir/../../etc/passwd` are all blocked; `src/main.py`, `./output/data.csv` and `/workspace/src/main.py` are fine.
 
 ## Environment Variables
 
-Profile-level environment variables can be configured in Bay's `config.yaml` and are automatically injected into the sandbox runtime:
-
-```yaml
-profiles:
-  - id: python-default
-    image: "ship:latest"
-    env:
-      API_KEY: "secret-key-12345"
-      DEBUG_MODE: "true"
-      DATABASE_URL: "postgresql://localhost/mydb"
-```
-
-### How It Works
-
-1. **Container Startup**: Bay encodes `profile.env` as `BAY_PROFILE_ENV` (format: `KEY1=VALUE1:KEY2=VALUE2`)
-2. **Entrypoint Processing**: Ship's entrypoint.sh parses `BAY_PROFILE_ENV` and generates `/workspace/.bay_env.sh`
-3. **Runtime Injection**:
-   - **Shell**: Commands automatically source `/workspace/.bay_env.sh` before execution
-   - **Python**: IPython kernel loads environment variables at startup
-
-### Accessing Environment Variables
-
-**In Shell**:
-```bash
-echo $API_KEY
-# Output: secret-key-12345
-```
-
-**In Python**:
-```python
-import os
-print(os.environ.get("API_KEY"))
-# Output: secret-key-12345
-```
-
-### Persistence Notes
-
-- Environment variables persist for the lifetime of the sandbox
-- Changes to `profile.env` require creating a new sandbox
-- Users can manually add custom env vars to `/workspace/.bashrc` for persistence across shell sessions
+Profile-level variables from Bay's `config.yaml` (`profiles[].env`) are injected into the container, so every command sees them (`$NAME` in the shell, `os.environ` in Python); `/workspace/.bay_env.sh` holds a copy that every shell command sources. Changes to a profile only reach newly created sandboxes. For your own variables across shell commands, add `export` lines to `/workspace/.bashrc`.
 
 ## Constraints Summary
 
 | Constraint | Value |
 |------------|-------|
-| Workspace root | `/workspace` |
-| Path security | All paths must resolve within `/workspace` |
-| Python timeout | 1-300s (default 30s) |
-| Shell timeout | 1-300s (default 30s) |
-| Write file limit | 5MB (UTF-8 encoded) |
-| Upload/download limit | 50MB per file |
-| Python runtime | 3.13 (IPython kernel, variables persist) |
-| Python environment | Conda `base` under `/opt/conda`; `conda` and `uv` available |
-| Playwright browsers | Pre-installed under `/ms-playwright`; write artifacts to `/workspace` |
-| Node.js runtime | LTS (npm, pnpm, vercel) |
-| Shell user | `shipyard` with passwordless sudo |
-| Profile env vars | Automatically injected via `/workspace/.bay_env.sh` |
+| User | `shipyard`, no root, no sudo, no system package manager |
+| Workspace root | `/workspace`, persistent; everything else resets when the container is recreated |
+| Path security | File operation paths must resolve within `/workspace` |
+| Write file limit | 5 MB (UTF-8 encoded) |
+| Upload/download limit | 50 MB per file |
+| Python | 3.13 in conda `base` (`/opt/conda`), the default `python` |
+| Other runtimes | bun (`node`/`npx` shims), Rust stable via rustup, Nix with pinned `nixpkgs` |
+| GPU | CUDA + cuDNN in `/opt/cuda`; devices only in GPU profiles |
